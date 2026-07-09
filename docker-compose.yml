@@ -1,0 +1,177 @@
+version: "3.9"
+
+services:
+
+  traefik:
+    image: traefik:v3.0
+    container_name: fila-traefik
+    ports:
+      - "3000:3000"   # Painel
+      - "3001:3001"   # Atendimento
+      - "8888:8080"   # Dashboard Traefik
+    volumes:
+      - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fila-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fila-postgres
+    environment:
+      POSTGRES_USER: fila
+      POSTGRES_PASSWORD: fila123
+      POSTGRES_DB: fila_atendimento
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fila"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fila-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: fila-keycloak
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/fila_atendimento
+      KC_DB_USERNAME: fila
+      KC_DB_PASSWORD: fila123
+      KC_DB_SCHEMA: keycloak
+      KC_HOSTNAME_URL: http://localhost:8080
+      KC_HOSTNAME_ADMIN_URL: http://localhost:8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fila-net
+
+  artemis:
+    image: apache/activemq-artemis:2.33.0
+    container_name: fila-artemis
+    environment:
+      ARTEMIS_USER: artemis
+      ARTEMIS_PASSWORD: artemis123
+      ANONYMOUS_LOGIN: "false"
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    volumes:
+      - artemis_data:/var/lib/artemis-instance
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8161/console"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fila-net
+
+  # ─── APIs ───────────────────────────────────────────────
+
+  api-painel:
+    build: ./api-painel
+    container_name: fila-api-painel
+    environment:
+      SPRING_ARTEMIS_BROKER_URL: tcp://artemis:61616
+      SPRING_ARTEMIS_USER: artemis
+      SPRING_ARTEMIS_PASSWORD: artemis123
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8080/realms/fila-atendimento
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
+      APP_INTERNAL_API_KEY: chave-interna-fila-2024
+    depends_on:
+      artemis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      # Rota: localhost:3000/api/* → api-painel
+      - "traefik.http.routers.api-painel.entrypoints=painel"
+      - "traefik.http.routers.api-painel.rule=PathPrefix(`/api/`)"
+      - "traefik.http.routers.api-painel.priority=20"
+      - "traefik.http.services.api-painel.loadbalancer.server.port=8081"
+      # SSE: desabilita buffering para streaming em tempo real
+      - "traefik.http.middlewares.sse-headers.headers.customresponseheaders.X-Accel-Buffering=no"
+      - "traefik.http.routers.api-painel.middlewares=sse-headers"
+    networks:
+      - fila-net
+
+  api-atendimento:
+    build: ./api-atendimento
+    container_name: fila-api-atendimento
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/fila_atendimento
+      SPRING_DATASOURCE_USERNAME: fila
+      SPRING_DATASOURCE_PASSWORD: fila123
+      SPRING_ARTEMIS_BROKER_URL: tcp://artemis:61616
+      SPRING_ARTEMIS_USER: artemis
+      SPRING_ARTEMIS_PASSWORD: artemis123
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8080/realms/fila-atendimento
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
+      APP_API_PAINEL_URL: http://api-painel:8081
+      APP_INTERNAL_API_KEY: chave-interna-fila-2024
+    depends_on:
+      postgres:
+        condition: service_healthy
+      artemis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      # Rota: localhost:3001/api/* → api-atendimento
+      - "traefik.http.routers.api-atendimento.entrypoints=atendimento"
+      - "traefik.http.routers.api-atendimento.rule=PathPrefix(`/api/`)"
+      - "traefik.http.routers.api-atendimento.priority=20"
+      - "traefik.http.services.api-atendimento.loadbalancer.server.port=8082"
+    networks:
+      - fila-net
+
+  # ─── Frontends (apenas estáticos) ──────────────────────
+
+  app-painel:
+    build: ./app-painel
+    container_name: fila-app-painel
+    depends_on:
+      - api-painel
+    labels:
+      - "traefik.enable=true"
+      # Rota: localhost:3000/* (fallback) → app-painel
+      - "traefik.http.routers.app-painel.entrypoints=painel"
+      - "traefik.http.routers.app-painel.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.app-painel.priority=10"
+      - "traefik.http.services.app-painel.loadbalancer.server.port=80"
+    networks:
+      - fila-net
+
+  app-atendimento:
+    build: ./app-atendimento
+    container_name: fila-app-atendimento
+    depends_on:
+      - api-atendimento
+    labels:
+      - "traefik.enable=true"
+      # Rota: localhost:3001/* (fallback) → app-atendimento
+      - "traefik.http.routers.app-atendimento.entrypoints=atendimento"
+      - "traefik.http.routers.app-atendimento.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.app-atendimento.priority=10"
+      - "traefik.http.services.app-atendimento.loadbalancer.server.port=80"
+    networks:
+      - fila-net
+
+volumes:
+  postgres_data:
+  artemis_data:
+
+networks:
+  fila-net:
+    driver: bridge

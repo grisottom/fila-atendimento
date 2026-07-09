@@ -1,0 +1,17 @@
+# Configuração estática do Traefik
+# Equivalente a Ingress Controller no K8s / Router no OpenShift
+
+entryPoints:
+  painel:
+    address: ":3000"
+  atendimento:
+    address: ":3001"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: fila-net
+
+api:
+  dashboard: true
+  insecure: true
