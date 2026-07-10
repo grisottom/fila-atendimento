@@ -49,7 +49,7 @@ public class PainelSseService {
         // Garante que a assinatura gerada no Artemis é temporária (se desfaz ao desconectar)
         container.setSubscriptionDurable(false);
 
-        // 2. Define o que acontece quando o Artemis entregar uma mensagem neste tópico
+        // 2. Quando o Artemis entrega uma mensagem neste tópico para este painel, envia via SSE para o cliente
         container.setMessageListener((MessageListener) message -> {
             try {
                 String body = ((TextMessage) message).getText();
@@ -72,7 +72,7 @@ public class PainelSseService {
         emitter.onError(e -> cleanup(chave));
 
         // 4. Solicita replay dos atendimentos ativos para este painel
-        solicitarReplay(agenciaId, painelId);
+        replayRequest(agenciaId, painelId);
 
         log.info("Painel conectado via SSE: {}", chave);
 
@@ -101,7 +101,7 @@ public class PainelSseService {
         }
     }
 
-    private void solicitarReplay(String agenciaId, Integer painelId) {
+    private void replayRequest(String agenciaId, Integer painelId) {
         try {
             String json = objectMapper.writeValueAsString(Map.of("agenciaId", agenciaId, "painelId", painelId));
             jmsTemplate.send("replay-request", session -> session.createTextMessage(json));

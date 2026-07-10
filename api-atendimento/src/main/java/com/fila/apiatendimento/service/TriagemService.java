@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -35,8 +36,9 @@ public class TriagemService {
 
     @Transactional
     public TriagemResponse recepcionar(TriagemRequest request) {
-        Pessoa pessoa = pessoaRepository.findById(request.cpf())
-                .orElseThrow(() -> new RuntimeException("Pessoa não encontrada com CPF: " + request.cpf()));
+        Long cpf = Objects.requireNonNull(request.cpf(), "CPF não pode ser nulo");
+        Pessoa pessoa = pessoaRepository.findById(cpf)
+            .orElseThrow(() -> new RuntimeException("Pessoa não encontrada com CPF: " + cpf));
 
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
         LocalDateTime fimDia = inicioDia.plusDays(1);

@@ -25,7 +25,7 @@ public interface FilaAtendimentoRepository extends JpaRepository<FilaAtendimento
 
     List<FilaAtendimento> findByAgenciaIdAndStatusIn(String agenciaId, List<String> statuses);
 
-    Optional<FilaAtendimento> findByAtendenteUsernameAndStatusIn(String username, List<String> statuses);
+    Optional<FilaAtendimento> findFirstByAtendenteUsernameAndStatusInOrderByHorarioChamadaDesc(String username, List<String> statuses);
 
     @Query("SELECT COALESCE(MAX(f.posicaoFila), 0) FROM FilaAtendimento f WHERE f.agenciaId = :agenciaId")
     Integer findMaxPosicaoFila(@Param("agenciaId") String agenciaId);

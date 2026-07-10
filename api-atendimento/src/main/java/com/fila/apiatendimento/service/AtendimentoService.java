@@ -1,5 +1,6 @@
 package com.fila.apiatendimento.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.entity.FilaAtendimento;
 import com.fila.apiatendimento.entity.Painel;
@@ -7,11 +8,12 @@ import com.fila.apiatendimento.entity.Sala;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.SalaRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClient;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,29 +22,31 @@ import java.util.Map;
 @Service
 public class AtendimentoService {
 
+    private static final Logger log = LoggerFactory.getLogger(AtendimentoService.class);
+
     private final FilaAtendimentoRepository filaRepository;
     private final SalaRepository salaRepository;
     private final ServicoRepository servicoRepository;
-    private final RestClient restClient;
-    private final String internalApiKey;
+    private final JmsTemplate jmsTemplate;
+    private final ObjectMapper objectMapper;
 
     public AtendimentoService(FilaAtendimentoRepository filaRepository,
                               SalaRepository salaRepository,
                               ServicoRepository servicoRepository,
-                              @Value("${app.api-painel-url}") String apiPainelUrl,
-                              @Value("${app.internal-api-key}") String internalApiKey) {
+                              JmsTemplate jmsTemplate,
+                              ObjectMapper objectMapper) {
         this.filaRepository = filaRepository;
         this.salaRepository = salaRepository;
         this.servicoRepository = servicoRepository;
-        this.internalApiKey = internalApiKey;
-        this.restClient = RestClient.builder().baseUrl(apiPainelUrl).build();
+        this.jmsTemplate = jmsTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public AtendimentoResponse buscarAtivo(String username) {
-        return filaRepository.findByAtendenteUsernameAndStatusIn(username, List.of("CHAMANDO", "EM_ATENDIMENTO"))
+        return filaRepository.findFirstByAtendenteUsernameAndStatusInOrderByHorarioChamadaDesc(username, List.of("CHAMANDO", "EM_ATENDIMENTO"))
                 .map(fila -> {
                     String salaNome = fila.getSalaId() != null
-                            ? salaRepository.findById(fila.getSalaId()).map(Sala::getNome).orElse(null)
+                            ? salaRepository.findById(fila.getSalaId()).map(s -> s.getNome()).orElse(null)
                             : null;
                     return toResponse(fila, salaNome);
                 })
@@ -79,7 +83,7 @@ public class AtendimentoService {
     }
 
     @Transactional
-    public void rechamar(Integer atendimentoId) {
+    public void rechamar(@NonNull Integer atendimentoId) {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
@@ -90,7 +94,7 @@ public class AtendimentoService {
     }
 
     @Transactional
-    public AtendimentoResponse ausentar(Integer atendimentoId) {
+    public AtendimentoResponse ausentar(@NonNull Integer atendimentoId) {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
@@ -99,7 +103,7 @@ public class AtendimentoService {
         Integer maxPosicao = filaRepository.findMaxPosicaoFila(fila.getAgenciaId()) + 1;
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(maxPosicao);
-        fila.setHorarioAgendado(null); // perde prioridade de agendamento
+        fila.setHorarioAgendado(null);
         fila.setSalaId(null);
         fila.setAtendenteUsername(null);
         fila.setHorarioChamada(null);
@@ -113,7 +117,7 @@ public class AtendimentoService {
     }
 
     @Transactional
-    public AtendimentoResponse iniciarAtendimento(Integer atendimentoId) {
+    public AtendimentoResponse iniciarAtendimento(@NonNull Integer atendimentoId) {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
@@ -130,7 +134,7 @@ public class AtendimentoService {
     }
 
     @Transactional
-    public AtendimentoResponse finalizarAtendimento(Integer atendimentoId) {
+    public AtendimentoResponse finalizarAtendimento(@NonNull Integer atendimentoId) {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
@@ -144,22 +148,18 @@ public class AtendimentoService {
     private void publicarNoPainel(Sala sala, FilaAtendimento fila, String status) {
         for (Painel painel : sala.getPaineis()) {
             try {
-                restClient.post()
-                        .uri("/api/internal/publicar")
-                        .header("X-Internal-Key", internalApiKey)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(Map.of(
-                                "agenciaId", sala.getAgenciaId(),
-                                "painelId", painel.getNumero(),
-                                "senha", fila.getSenha(),
-                                "nomePessoa", fila.getNomePessoa(),
-                                "sala", sala.getNome(),
-                                "status", status
-                        ))
-                        .retrieve()
-                        .toBodilessEntity();
+                String topico = "agencia." + sala.getAgenciaId() + ".painel." + painel.getNumero();
+                String json = objectMapper.writeValueAsString(Map.of(
+                        "agenciaId", sala.getAgenciaId(),
+                        "painelId", painel.getNumero(),
+                        "senha", fila.getSenha(),
+                        "nomePessoa", fila.getNomePessoa(),
+                        "sala", sala.getNome(),
+                        "status", status
+                ));
+                jmsTemplate.send(topico, session -> session.createTextMessage(json));
             } catch (Exception e) {
-                // painel pode estar offline
+                log.error("Erro ao publicar no painel {}: {}", painel.getNumero(), e.getMessage());
             }
         }
     }

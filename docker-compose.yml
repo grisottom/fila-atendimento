@@ -28,7 +28,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fila"]
+      test: ["CMD-SHELL", "pg_isready -U fila -d fila_atendimento"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -53,6 +53,8 @@ services:
       - "8080:8080"
     volumes:
       - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+      - ./infra/keycloak/themes/painel:/opt/keycloak/themes/painel
+      - ./infra/keycloak/themes/atendimento:/opt/keycloak/themes/atendimento
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,6 +174,12 @@ volumes:
   postgres_data:
   artemis_data:
 
+#ipam - IP Address Management Driver
+#configuration to avoid conflict with VPN, when it is on
+#to avoid error: "could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network"
 networks:
   fila-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.23.23.0/26

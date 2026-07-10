@@ -23,7 +23,3 @@ spring:
         jwt:
           issuer-uri: http://localhost:8080/realms/fila-atendimento
           jwk-set-uri: http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/certs
-
-app:
-  api-painel-url: http://localhost:8081
-  internal-api-key: chave-interna-fila-2024

@@ -11,11 +11,9 @@ import jakarta.jms.MessageListener;
 import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.springframework.jms.core.JmsTemplate;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 import jakarta.annotation.PostConstruct;
 import java.util.List;
@@ -30,21 +28,18 @@ public class ReplayListener {
     private final SalaRepository salaRepository;
     private final ConnectionFactory connectionFactory;
     private final ObjectMapper objectMapper;
-    private final RestClient restClient;
-    private final String internalApiKey;
+    private final JmsTemplate jmsTemplate;
 
     public ReplayListener(FilaAtendimentoRepository filaRepository,
                           SalaRepository salaRepository,
                           ConnectionFactory connectionFactory,
                           ObjectMapper objectMapper,
-                          @Value("${app.api-painel-url}") String apiPainelUrl,
-                          @Value("${app.internal-api-key}") String internalApiKey) {
+                          JmsTemplate jmsTemplate) {
         this.filaRepository = filaRepository;
         this.salaRepository = salaRepository;
         this.connectionFactory = connectionFactory;
         this.objectMapper = objectMapper;
-        this.internalApiKey = internalApiKey;
-        this.restClient = RestClient.builder().baseUrl(apiPainelUrl).build();
+        this.jmsTemplate = jmsTemplate;
     }
 
     @PostConstruct
@@ -85,20 +80,16 @@ public class ReplayListener {
             if (!painelAssociado) continue;
 
             try {
-                restClient.post()
-                        .uri("/api/internal/publicar")
-                        .header("X-Internal-Key", internalApiKey)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(Map.of(
-                                "agenciaId", agenciaId,
-                                "painelId", painelId,
-                                "senha", fila.getSenha(),
-                                "nomePessoa", fila.getNomePessoa(),
-                                "sala", sala.getNome(),
-                                "status", fila.getStatus()
-                        ))
-                        .retrieve()
-                        .toBodilessEntity();
+                String topico = "agencia." + agenciaId + ".painel." + painelId;
+                String json = objectMapper.writeValueAsString(Map.of(
+                        "agenciaId", agenciaId,
+                        "painelId", painelId,
+                        "senha", fila.getSenha(),
+                        "nomePessoa", fila.getNomePessoa(),
+                        "sala", sala.getNome(),
+                        "status", fila.getStatus()
+                ));
+                jmsTemplate.send(topico, session -> session.createTextMessage(json));
             } catch (Exception e) {
                 log.error("Erro ao republicar atendimento {} no painel {}: {}", fila.getId(), painelId, e.getMessage());
             }
