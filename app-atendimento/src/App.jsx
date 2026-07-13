@@ -4,6 +4,7 @@ import keycloak from "./services/keycloak";
 import Configuracao from "./components/Configuracao";
 import Triagem from "./components/Triagem";
 import Atendimento from "./components/Atendimento";
+import Atendentes from "./components/Atendentes";
 
 function hasRole(role) {
   return keycloak.hasRealmRole(role);
@@ -17,6 +18,7 @@ export default function App() {
       <nav style={{ padding: 12, borderBottom: "1px solid #ccc", display: "flex", gap: 16 }}>
         <strong>Atendimento</strong>
         {isAdmin && <NavLink to="/configuracao">Configuração</NavLink>}
+        {isAdmin && <NavLink to="/atendentes">Atendentes</NavLink>}
         {(isAdmin || hasRole("basica")) && <NavLink to="/triagem">Triagem</NavLink>}
         <NavLink to="/atendimento">Atendimento</NavLink>
         <span style={{ marginLeft: "auto" }}>
@@ -28,6 +30,7 @@ export default function App() {
       <div style={{ padding: 16 }}>
         <Routes>
           {isAdmin && <Route path="/configuracao" element={<Configuracao />} />}
+          {isAdmin && <Route path="/atendentes" element={<Atendentes />} />}
           <Route path="/triagem" element={<Triagem />} />
           <Route path="/atendimento" element={<Atendimento />} />
           <Route path="*" element={<Atendimento />} />

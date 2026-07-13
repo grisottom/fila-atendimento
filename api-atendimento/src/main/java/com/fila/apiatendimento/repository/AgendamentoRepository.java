@@ -8,4 +8,7 @@ import java.util.List;
 public interface AgendamentoRepository extends JpaRepository<Agendamento, Integer> {
     List<Agendamento> findByCpfAndAgenciaIdAndDataHoraBetween(
         Long cpf, String agenciaId, LocalDateTime inicio, LocalDateTime fim);
+
+    List<Agendamento> findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(
+        String agenciaId, LocalDateTime inicio, LocalDateTime fim);
 }

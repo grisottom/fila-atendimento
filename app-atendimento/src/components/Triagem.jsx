@@ -1,12 +1,41 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { api } from "../services/api";
+import keycloak from "../services/keycloak";
+
+function getStorageKey() {
+  return `app_agencia_${keycloak.tokenParsed?.preferred_username}`;
+}
 
 export default function Triagem() {
   const [cpf, setCpf] = useState("");
-  const [agenciaId, setAgenciaId] = useState("");
+  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
   const [servicoId, setServicoId] = useState("");
   const [resultado, setResultado] = useState(null);
   const [erro, setErro] = useState("");
+  const [agendamentos, setAgendamentos] = useState([]);
+
+  const agenciaRef = useRef(null);
+  const cpfRef = useRef(null);
+
+  useEffect(() => {
+    if (!agenciaId) {
+      agenciaRef.current?.focus();
+    } else {
+      cpfRef.current?.focus();
+      carregarAgendamentos();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (agenciaId) carregarAgendamentos();
+  }, [agenciaId]);
+
+  async function carregarAgendamentos() {
+    try {
+      const res = await api.get(`/api/triagem/agendamentos/${agenciaId}`);
+      setAgendamentos(res || []);
+    } catch (e) { /* ignora */ }
+  }
 
   const servicos = [
     { id: "servico-basico", nome: "Serviço Básico" },
@@ -18,6 +47,7 @@ export default function Triagem() {
   async function recepcionar(e) {
     e.preventDefault();
     setErro(""); setResultado(null);
+    localStorage.setItem(getStorageKey(), agenciaId);
     try {
       const res = await api.post("/api/triagem/recepcionar", {
         cpf: Number(cpf), agenciaId, servicoId,
@@ -34,11 +64,11 @@ export default function Triagem() {
       <form onSubmit={recepcionar}>
         <div>
           <label>Agência: </label>
-          <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" required />
+          <input ref={agenciaRef} value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" required />
         </div>
         <div>
           <label>CPF: </label>
-          <input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="11122233344" required />
+          <input ref={cpfRef} value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="11122233344" required />
         </div>
         <div>
           <label>Serviço: </label>
@@ -57,6 +87,34 @@ export default function Triagem() {
           <p>Nome: {resultado.nomePessoa}</p>
           <p>Serviço: {resultado.servicoId}</p>
           {resultado.horarioAgendado && <p>Agendado para: {new Date(resultado.horarioAgendado).toLocaleTimeString()}</p>}
+        </div>
+      )}
+
+      {agendamentos.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <h3>Agendamentos do dia — {agenciaId}</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+                <th style={{ padding: "6px 10px" }}>Horário</th>
+                <th style={{ padding: "6px 10px" }}>CPF</th>
+                <th style={{ padding: "6px 10px" }}>Nome</th>
+                <th style={{ padding: "6px 10px" }}>Serviço</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agendamentos.map((a, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "6px 10px" }}>{new Date(a.dataHora).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+                  <td style={{ padding: "6px 10px" }}>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setCpf(String(a.cpf)); setServicoId(a.servicoId); }} style={{ color: "#1976d2", cursor: "pointer" }}>{a.cpf}</a>
+                  </td>
+                  <td style={{ padding: "6px 10px" }}>{a.nomePessoa}</td>
+                  <td style={{ padding: "6px 10px" }}>{a.servicoId}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

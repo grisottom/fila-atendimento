@@ -1,5 +1,6 @@
 package com.fila.apiatendimento.service;
 
+import com.fila.apiatendimento.dto.AgendamentoResponse;
 import com.fila.apiatendimento.dto.TriagemRequest;
 import com.fila.apiatendimento.dto.TriagemResponse;
 import com.fila.apiatendimento.entity.Agendamento;
@@ -76,5 +77,19 @@ public class TriagemService {
             sb.append(CHARS.charAt(ThreadLocalRandom.current().nextInt(CHARS.length())));
         }
         return sb.toString();
+    }
+
+    public List<AgendamentoResponse> listarAgendamentosDoDia(String agenciaId) {
+        LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
+        LocalDateTime fimDia = inicioDia.plusDays(1);
+
+        return agendamentoRepository.findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(agenciaId, inicioDia, fimDia)
+                .stream()
+                .map(a -> {
+                    String nome = pessoaRepository.findById(a.getCpf())
+                            .map(Pessoa::getNome).orElse("Desconhecido");
+                    return new AgendamentoResponse(a.getCpf(), nome, a.getServicoId(), a.getDataHora());
+                })
+                .toList();
     }
 }

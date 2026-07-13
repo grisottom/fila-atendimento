@@ -5,10 +5,12 @@ import com.fila.apiatendimento.dto.PainelRequest;
 import com.fila.apiatendimento.dto.SalaRequest;
 import com.fila.apiatendimento.entity.*;
 import com.fila.apiatendimento.repository.*;
+import com.fila.apiatendimento.service.KeycloakAdminService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -17,13 +19,19 @@ public class AdminController {
     private final AgenciaRepository agenciaRepository;
     private final PainelRepository painelRepository;
     private final SalaRepository salaRepository;
+    private final ServicoRepository servicoRepository;
+    private final KeycloakAdminService keycloakAdminService;
 
     public AdminController(AgenciaRepository agenciaRepository,
                            PainelRepository painelRepository,
-                           SalaRepository salaRepository) {
+                           SalaRepository salaRepository,
+                           ServicoRepository servicoRepository,
+                           KeycloakAdminService keycloakAdminService) {
         this.agenciaRepository = agenciaRepository;
         this.painelRepository = painelRepository;
         this.salaRepository = salaRepository;
+        this.servicoRepository = servicoRepository;
+        this.keycloakAdminService = keycloakAdminService;
     }
 
     @PostMapping("/agencia")
@@ -70,5 +78,15 @@ public class AdminController {
     @GetMapping("/sala/{agenciaId}")
     public List<Sala> listarSalas(@PathVariable String agenciaId) {
         return salaRepository.findByAgenciaId(agenciaId);
+    }
+
+    @GetMapping("/atendentes/{agenciaId}")
+    public ResponseEntity<List<Map<String, Object>>> listarAtendentes(@PathVariable String agenciaId) {
+        return ResponseEntity.ok(keycloakAdminService.listarAtendentes(agenciaId));
+    }
+
+    @GetMapping("/servicos")
+    public List<Servico> listarServicos() {
+        return servicoRepository.findAll();
     }
 }

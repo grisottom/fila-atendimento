@@ -29,4 +29,16 @@ public interface FilaAtendimentoRepository extends JpaRepository<FilaAtendimento
 
     @Query("SELECT COALESCE(MAX(f.posicaoFila), 0) FROM FilaAtendimento f WHERE f.agenciaId = :agenciaId")
     Integer findMaxPosicaoFila(@Param("agenciaId") String agenciaId);
+
+    @Query(value = """
+        SELECT f.* FROM fila_atendimento f
+        INNER JOIN servico s ON f.servico_id = s.id
+        WHERE f.agencia_id = :agenciaId
+          AND f.status = 'AGUARDANDO'
+          AND s.permissao_exigida IN (:permissoes)
+        ORDER BY f.horario_agendado NULLS LAST, f.posicao_fila
+        """, nativeQuery = true)
+    List<FilaAtendimento> findFilaDisponivel(
+        @Param("agenciaId") String agenciaId,
+        @Param("permissoes") List<String> permissoes);
 }

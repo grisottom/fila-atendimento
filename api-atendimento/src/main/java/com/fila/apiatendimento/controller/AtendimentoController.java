@@ -2,6 +2,7 @@ package com.fila.apiatendimento.controller;
 
 import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.dto.ChamarProximoRequest;
+import com.fila.apiatendimento.entity.Servico;
 import com.fila.apiatendimento.service.AtendimentoService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -58,6 +59,20 @@ public class AtendimentoController {
     @PostMapping("/finalizar/{id}")
     public ResponseEntity<AtendimentoResponse> finalizar(@PathVariable Integer id) {
         return ResponseEntity.ok(atendimentoService.finalizarAtendimento(id));
+    }
+
+    @GetMapping("/meus-servicos")
+    public ResponseEntity<List<Servico>> meusServicos(@AuthenticationPrincipal Jwt jwt) {
+        List<String> permissoes = extrairPermissoes(jwt);
+        return ResponseEntity.ok(atendimentoService.listarServicosPorPermissoes(permissoes));
+    }
+
+    @GetMapping("/fila-disponivel")
+    public ResponseEntity<List<AtendimentoResponse>> filaDisponivel(
+            @RequestParam String agenciaId,
+            @AuthenticationPrincipal Jwt jwt) {
+        List<String> permissoes = extrairPermissoes(jwt);
+        return ResponseEntity.ok(atendimentoService.listarFilaDisponivel(agenciaId, permissoes));
     }
 
     @SuppressWarnings("unchecked")

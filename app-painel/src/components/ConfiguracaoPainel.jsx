@@ -3,8 +3,10 @@ import keycloak from "../services/keycloak";
 
 export default function ConfiguracaoPainel({ onAtivar, username }) {
   const agenciaDoUsuario = keycloak.tokenParsed?.agencia || "";
-  const [agenciaId, setAgenciaId] = useState(agenciaDoUsuario);
-  const [painelNumero, setPainelNumero] = useState("");
+  const storageKey = `painel_config_${username}`;
+  const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+  const [agenciaId, setAgenciaId] = useState(saved?.agenciaId || agenciaDoUsuario);
+  const [painelNumero, setPainelNumero] = useState(saved?.painelNumero?.toString() || "");
 
   function ativar(e) {
     e.preventDefault();

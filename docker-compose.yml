@@ -123,6 +123,10 @@ services:
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
       APP_API_PAINEL_URL: http://api-painel:8081
       APP_INTERNAL_API_KEY: chave-interna-fila-2024
+      APP_KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      APP_KEYCLOAK_REALM: fila-atendimento
+      APP_KEYCLOAK_ADMIN_USER: admin
+      APP_KEYCLOAK_ADMIN_PASSWORD: admin
     depends_on:
       postgres:
         condition: service_healthy

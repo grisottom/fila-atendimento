@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../services/api";
+import keycloak from "../services/keycloak";
+
+function getStorageKey() {
+  return `app_agencia_${keycloak.tokenParsed?.preferred_username}`;
+}
 
 export default function Configuracao() {
   const [paineis, setPaineis] = useState([]);
   const [salas, setSalas] = useState([]);
-  const [agenciaId, setAgenciaId] = useState("");
+  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
   const [msg, setMsg] = useState("");
 
   // Painel form
@@ -21,6 +26,7 @@ export default function Configuracao() {
   }, [agenciaId]);
 
   async function carregarDados() {
+    localStorage.setItem(getStorageKey(), agenciaId);
     try {
       setPaineis(await api.get(`/api/admin/painel/${agenciaId}`));
       setSalas(await api.get(`/api/admin/sala/${agenciaId}`));

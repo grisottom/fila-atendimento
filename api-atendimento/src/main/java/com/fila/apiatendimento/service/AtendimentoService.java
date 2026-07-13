@@ -5,6 +5,7 @@ import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.entity.FilaAtendimento;
 import com.fila.apiatendimento.entity.Painel;
 import com.fila.apiatendimento.entity.Sala;
+import com.fila.apiatendimento.entity.Servico;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.SalaRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
@@ -138,11 +139,17 @@ public class AtendimentoService {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
+        Sala sala = fila.getSalaId() != null ? salaRepository.findById(fila.getSalaId()).orElse(null) : null;
+
         fila.setStatus("FINALIZADO");
         fila.setHorarioFimAtendimento(LocalDateTime.now());
         filaRepository.save(fila);
 
-        return toResponse(fila, null);
+        if (sala != null) {
+            publicarNoPainel(sala, fila, "FINALIZADO");
+        }
+
+        return toResponse(fila, sala != null ? sala.getNome() : null);
     }
 
     private void publicarNoPainel(Sala sala, FilaAtendimento fila, String status) {
@@ -167,5 +174,17 @@ public class AtendimentoService {
     private AtendimentoResponse toResponse(FilaAtendimento fila, String salaNome) {
         return new AtendimentoResponse(fila.getId(), fila.getSenha(), fila.getNomePessoa(),
                 fila.getServicoId(), fila.getStatus(), salaNome);
+    }
+
+    public List<Servico> listarServicosPorPermissoes(List<String> permissoes) {
+        return servicoRepository.findByPermissaoExigidaIn(permissoes);
+    }
+
+    public List<AtendimentoResponse> listarFilaDisponivel(String agenciaId, List<String> permissoes) {
+        if (agenciaId == null || permissoes.isEmpty()) return List.of();
+        return filaRepository.findFilaDisponivel(agenciaId, permissoes)
+                .stream()
+                .map(f -> toResponse(f, null))
+                .toList();
     }
 }

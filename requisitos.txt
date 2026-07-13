@@ -24,7 +24,7 @@ O ger terá permissão
 
 - admin
 
-Os atend terão permissões, também gerido por keycloak
+Os atendentes terão permissões, também gerido por keycloak
 
 - basica
 - normal
@@ -39,8 +39,8 @@ Os usuários pré cadastrados nos servicos na agencia agencia-01, no banco de da
 
 A senha para logar serão identicos nomes dos usuários adicionando -pwd no final
 
-Os atend tem capacidades distintas e são treinados para um subonjunto de serviços, 
-A relação atend vs serviços se dá através da permissão exigida para o serviço e a permissão que o usuário possui. 
+Os atendentes tem capacidades distintas e são treinados para um subonjunto de serviços, 
+A relação atendente vs serviços se dá através da permissão exigida para o serviço e a permissão que o usuário possui. 
 
 Os serviços e as permissões exigidas:
 - serviço-basico, permissão basica
@@ -83,13 +83,13 @@ A ideia é que Painel + API sejam 'plugáveis' e precisaremos criar uma interfac
 - cadastra paineis na Agencia do usuário Admin, informa localizacão (ex. térreo)
 - cadastra salas na Agencia do usuário Admin, informa localizacao (ex. fundos, ex. 2o andar) e indica paineis para a sala, minimo 1
 
-## Tela de triagem, feita por Atend com permissão basica ou pelo Admin
+## Tela de triagem, feita por atendente com permissão basica ou pelo Admin
 - recepção da pessoa na Agência, por CPF
 - obtem o agendamento da pessoa, se existir
 - gera senha aleatória, 5 caracteres ASCII, sem acento, MAIUSCULAS e NUMEROS, e insere na tabela fila de atendimentos, senha, CPF, nome, horário agendado (se existir)
 
-## Tela de atendimento, para Atend e Admin
-- indica em que 'sala' o atend está atendendo
+## Tela de Atendimento, para atendente e Admin
+- indica a agência e em que 'sala' o atendente está realizando o atendendimento
 - chama o próximo 
 - ausenta o próximo (não apareceu na sala, vai pro fim da fila)
 - inicia o atendimento 
@@ -112,7 +112,7 @@ Objetivo receber as mensagens destinadas a um painel
 Aplicacao Atendimento
 - a aplicação do Atendimento chama uma API Atendimento para obter o próximo atendimento da agencia, informando a 'sala' no chamado
 - a API Atendimento obtém os 'paineis' associados à 'sala' do chamado, caso não exista retorna erro
-- a API Atendimento chama uma função que obtém o próximo atendimento para a Agência (usar controle de concorrência no registro). Obs, fazer um join com os serviços atendidos pelo Atend para selecionar o próximo
+- a API Atendimento chama uma função que obtém o próximo atendimento para a Agência (usar controle de concorrência no registro). Obs, fazer um join com os serviços atendidos pelo atendente para selecionar o próximo
 - a API Atendimento, para cada painel, entrega o Payload do atendimento para API do Painel de Atualizacao que publica no Artemis (chamada REST)
 - A API Atendimento marca registro como 'chamado'
 
