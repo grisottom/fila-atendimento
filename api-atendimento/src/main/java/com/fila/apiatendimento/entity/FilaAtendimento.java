@@ -31,8 +31,8 @@ public class FilaAtendimento {
 
     private String status;
 
-    @Column(name = "sala_id")
-    private Integer salaId;
+    @Column(name = "estacao_id")
+    private Integer estacaoId;
 
     @Column(name = "atendente_username")
     private String atendenteUsername;
@@ -67,8 +67,8 @@ public class FilaAtendimento {
     public void setHorarioChegada(LocalDateTime horarioChegada) { this.horarioChegada = horarioChegada; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-    public Integer getSalaId() { return salaId; }
-    public void setSalaId(Integer salaId) { this.salaId = salaId; }
+    public Integer getEstacaoId() { return estacaoId; }
+    public void setEstacaoId(Integer estacaoId) { this.estacaoId = estacaoId; }
     public String getAtendenteUsername() { return atendenteUsername; }
     public void setAtendenteUsername(String atendenteUsername) { this.atendenteUsername = atendenteUsername; }
     public LocalDateTime getHorarioChamada() { return horarioChamada; }

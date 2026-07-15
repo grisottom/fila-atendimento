@@ -29,6 +29,11 @@ export default function App() {
   }
 
   function desativar() {
+    if (config) {
+      const sk = `painel-${config.agenciaId}-${config.painelNumero}`;
+      localStorage.removeItem(`${sk}-chamadas`);
+      localStorage.removeItem(`${sk}-historico`);
+    }
     localStorage.removeItem(getStorageKey(username));
     setConfig(null);
   }

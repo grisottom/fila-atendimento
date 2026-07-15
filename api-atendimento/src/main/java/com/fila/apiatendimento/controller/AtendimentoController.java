@@ -2,7 +2,9 @@ package com.fila.apiatendimento.controller;
 
 import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.dto.ChamarProximoRequest;
+import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.Servico;
+import com.fila.apiatendimento.repository.EstacaoRepository;
 import com.fila.apiatendimento.service.AtendimentoService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,9 +20,11 @@ import java.util.Map;
 public class AtendimentoController {
 
     private final AtendimentoService atendimentoService;
+    private final EstacaoRepository estacaoRepository;
 
-    public AtendimentoController(AtendimentoService atendimentoService) {
+    public AtendimentoController(AtendimentoService atendimentoService, EstacaoRepository estacaoRepository) {
         this.atendimentoService = atendimentoService;
+        this.estacaoRepository = estacaoRepository;
     }
 
     @PostMapping("/chamar")
@@ -29,7 +33,7 @@ public class AtendimentoController {
             @AuthenticationPrincipal Jwt jwt) {
         String username = jwt.getClaimAsString("preferred_username");
         List<String> permissoes = extrairPermissoes(jwt);
-        return ResponseEntity.ok(atendimentoService.chamarProximo(request.salaId(), username, permissoes));
+        return ResponseEntity.ok(atendimentoService.chamarProximo(request.estacaoId(), username, permissoes));
     }
 
     @GetMapping("/ativo")
@@ -59,6 +63,16 @@ public class AtendimentoController {
     @PostMapping("/finalizar/{id}")
     public ResponseEntity<AtendimentoResponse> finalizar(@PathVariable Integer id) {
         return ResponseEntity.ok(atendimentoService.finalizarAtendimento(id));
+    }
+
+    @PostMapping("/cancelar/{id}")
+    public ResponseEntity<AtendimentoResponse> cancelar(@PathVariable Integer id) {
+        return ResponseEntity.ok(atendimentoService.cancelarAtendimento(id));
+    }
+
+    @GetMapping("/estacoes/{agenciaId}")
+    public List<Estacao> listarEstacoes(@PathVariable String agenciaId) {
+        return estacaoRepository.findByAgenciaId(agenciaId);
     }
 
     @GetMapping("/meus-servicos")

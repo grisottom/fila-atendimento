@@ -2,10 +2,10 @@ package com.fila.apiatendimento.listener;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.FilaAtendimento;
-import com.fila.apiatendimento.entity.Sala;
+import com.fila.apiatendimento.repository.EstacaoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
-import com.fila.apiatendimento.repository.SalaRepository;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.MessageListener;
 import jakarta.jms.TextMessage;
@@ -25,18 +25,18 @@ public class ReplayListener {
     private static final Logger log = LoggerFactory.getLogger(ReplayListener.class);
 
     private final FilaAtendimentoRepository filaRepository;
-    private final SalaRepository salaRepository;
+    private final EstacaoRepository estacaoRepository;
     private final ConnectionFactory connectionFactory;
     private final ObjectMapper objectMapper;
     private final JmsTemplate jmsTemplate;
 
     public ReplayListener(FilaAtendimentoRepository filaRepository,
-                          SalaRepository salaRepository,
+                          EstacaoRepository estacaoRepository,
                           ConnectionFactory connectionFactory,
                           ObjectMapper objectMapper,
                           JmsTemplate jmsTemplate) {
         this.filaRepository = filaRepository;
-        this.salaRepository = salaRepository;
+        this.estacaoRepository = estacaoRepository;
         this.connectionFactory = connectionFactory;
         this.objectMapper = objectMapper;
         this.jmsTemplate = jmsTemplate;
@@ -70,14 +70,12 @@ public class ReplayListener {
                 agenciaId, List.of("CHAMANDO", "EM_ATENDIMENTO"));
 
         for (FilaAtendimento fila : ativos) {
-            if (fila.getSalaId() == null) continue;
+            if (fila.getEstacaoId() == null) continue;
 
-            Sala sala = salaRepository.findById(fila.getSalaId()).orElse(null);
-            if (sala == null) continue;
+            Estacao estacao = estacaoRepository.findById(fila.getEstacaoId()).orElse(null);
+            if (estacao == null || estacao.getPainel() == null) continue;
 
-            boolean painelAssociado = sala.getPaineis().stream()
-                    .anyMatch(p -> p.getNumero() == painelId);
-            if (!painelAssociado) continue;
+            if (estacao.getPainel().getNumeroPainel() != painelId) continue;
 
             try {
                 String topico = "agencia." + agenciaId + ".painel." + painelId;
@@ -86,7 +84,7 @@ public class ReplayListener {
                         "painelId", painelId,
                         "senha", fila.getSenha(),
                         "nomePessoa", fila.getNomePessoa(),
-                        "sala", sala.getNome(),
+                        "estacao", estacao.getNomeExibicao(),
                         "status", fila.getStatus()
                 ));
                 jmsTemplate.send(topico, session -> session.createTextMessage(json));

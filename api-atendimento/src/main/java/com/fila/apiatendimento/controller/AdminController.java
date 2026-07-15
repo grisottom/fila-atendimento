@@ -1,8 +1,8 @@
 package com.fila.apiatendimento.controller;
 
 import com.fila.apiatendimento.dto.AgenciaRequest;
+import com.fila.apiatendimento.dto.EstacaoRequest;
 import com.fila.apiatendimento.dto.PainelRequest;
-import com.fila.apiatendimento.dto.SalaRequest;
 import com.fila.apiatendimento.entity.*;
 import com.fila.apiatendimento.repository.*;
 import com.fila.apiatendimento.service.KeycloakAdminService;
@@ -18,18 +18,18 @@ public class AdminController {
 
     private final AgenciaRepository agenciaRepository;
     private final PainelRepository painelRepository;
-    private final SalaRepository salaRepository;
+    private final EstacaoRepository estacaoRepository;
     private final ServicoRepository servicoRepository;
     private final KeycloakAdminService keycloakAdminService;
 
     public AdminController(AgenciaRepository agenciaRepository,
                            PainelRepository painelRepository,
-                           SalaRepository salaRepository,
+                           EstacaoRepository estacaoRepository,
                            ServicoRepository servicoRepository,
                            KeycloakAdminService keycloakAdminService) {
         this.agenciaRepository = agenciaRepository;
         this.painelRepository = painelRepository;
-        this.salaRepository = salaRepository;
+        this.estacaoRepository = estacaoRepository;
         this.servicoRepository = servicoRepository;
         this.keycloakAdminService = keycloakAdminService;
     }
@@ -51,7 +51,7 @@ public class AdminController {
     public ResponseEntity<Painel> criarPainel(@RequestBody PainelRequest req) {
         Painel p = new Painel();
         p.setAgenciaId(req.agenciaId());
-        p.setNumero(req.numero());
+        p.setNumeroPainel(req.numeroPainel());
         p.setLocalizacao(req.localizacao());
         return ResponseEntity.ok(painelRepository.save(p));
     }
@@ -61,23 +61,37 @@ public class AdminController {
         return painelRepository.findByAgenciaId(agenciaId);
     }
 
-    @PostMapping("/sala")
-    public ResponseEntity<Sala> criarSala(@RequestBody SalaRequest req) {
-        List<Painel> paineis = painelRepository.findAllById(req.painelIds());
-        if (paineis.isEmpty()) {
-            return ResponseEntity.badRequest().build();
-        }
-        Sala s = new Sala();
-        s.setAgenciaId(req.agenciaId());
-        s.setNome(req.nome());
-        s.setLocalizacao(req.localizacao());
-        s.setPaineis(paineis);
-        return ResponseEntity.ok(salaRepository.save(s));
+    @DeleteMapping("/painel/{id}")
+    public ResponseEntity<Void> excluirPainel(@PathVariable Integer id) {
+        painelRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
     }
 
-    @GetMapping("/sala/{agenciaId}")
-    public List<Sala> listarSalas(@PathVariable String agenciaId) {
-        return salaRepository.findByAgenciaId(agenciaId);
+    @PostMapping("/estacao")
+    public ResponseEntity<Estacao> criarEstacao(@RequestBody EstacaoRequest req) {
+        Painel painel = painelRepository.findById(req.painelId())
+                .orElse(null);
+        if (painel == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        Estacao e = new Estacao();
+        e.setAgenciaId(req.agenciaId());
+        e.setTipoEstacao(req.tipoEstacao());
+        e.setNumeroEstacao(req.numeroEstacao());
+        e.setLocalizacao(req.localizacao());
+        e.setPainel(painel);
+        return ResponseEntity.ok(estacaoRepository.save(e));
+    }
+
+    @GetMapping("/estacao/{agenciaId}")
+    public List<Estacao> listarEstacoes(@PathVariable String agenciaId) {
+        return estacaoRepository.findByAgenciaId(agenciaId);
+    }
+
+    @DeleteMapping("/estacao/{id}")
+    public ResponseEntity<Void> excluirEstacao(@PathVariable Integer id) {
+        estacaoRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/atendentes/{agenciaId}")

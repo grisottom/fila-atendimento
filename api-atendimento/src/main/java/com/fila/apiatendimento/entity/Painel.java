@@ -12,15 +12,16 @@ public class Painel {
     @Column(name = "agencia_id")
     private String agenciaId;
 
-    private Integer numero;
+    @Column(name = "numero_painel")
+    private Integer numeroPainel;
     private String localizacao;
 
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getAgenciaId() { return agenciaId; }
     public void setAgenciaId(String agenciaId) { this.agenciaId = agenciaId; }
-    public Integer getNumero() { return numero; }
-    public void setNumero(Integer numero) { this.numero = numero; }
+    public Integer getNumeroPainel() { return numeroPainel; }
+    public void setNumeroPainel(Integer numeroPainel) { this.numeroPainel = numeroPainel; }
     public String getLocalizacao() { return localizacao; }
     public void setLocalizacao(String localizacao) { this.localizacao = localizacao; }
 }

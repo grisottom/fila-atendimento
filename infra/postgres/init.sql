@@ -19,22 +19,19 @@ CREATE TABLE servico (
 CREATE TABLE painel (
     id SERIAL PRIMARY KEY,
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
-    numero INTEGER NOT NULL,
+    numero_painel INTEGER NOT NULL,
     localizacao VARCHAR(200),
-    UNIQUE(agencia_id, numero)
+    UNIQUE(agencia_id, numero_painel)
 );
 
-CREATE TABLE sala (
+CREATE TABLE estacao (
     id SERIAL PRIMARY KEY,
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
-    nome VARCHAR(100) NOT NULL,
-    localizacao VARCHAR(200)
-);
-
-CREATE TABLE sala_painel (
-    sala_id INTEGER NOT NULL REFERENCES sala(id),
+    tipo_estacao VARCHAR(10) NOT NULL CHECK (tipo_estacao IN ('MESA', 'GUICHE')),
+    numero_estacao INTEGER NOT NULL,
+    localizacao VARCHAR(200),
     painel_id INTEGER NOT NULL REFERENCES painel(id),
-    PRIMARY KEY (sala_id, painel_id)
+    UNIQUE(agencia_id, tipo_estacao, numero_estacao)
 );
 
 CREATE TABLE pessoa (
@@ -60,7 +57,7 @@ CREATE TABLE fila_atendimento (
     horario_agendado TIMESTAMP,
     horario_chegada TIMESTAMP NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'AGUARDANDO',
-    sala_id INTEGER REFERENCES sala(id),
+    estacao_id INTEGER REFERENCES estacao(id),
     atendente_username VARCHAR(100),
     horario_chamada TIMESTAMP,
     horario_inicio_atendimento TIMESTAMP,
@@ -85,23 +82,18 @@ INSERT INTO servico (id, nome, permissao_exigida) VALUES
 ('servico-normal-02', 'Serviço Normal 02', 'normal'),
 ('servico-especial-01', 'Serviço Especial 01', 'especial');
 
--- Painéis e salas de exemplo
-INSERT INTO painel (agencia_id, numero, localizacao) VALUES
+-- Painéis e estações de exemplo
+INSERT INTO painel (agencia_id, numero_painel, localizacao) VALUES
 ('agencia-01', 1, 'Térreo'),
 ('agencia-01', 2, '2º Andar'),
 ('agencia-02', 1, 'Térreo');
 
-INSERT INTO sala (agencia_id, nome, localizacao) VALUES
-('agencia-01', 'Sala 1', 'Térreo - Fundos'),
-('agencia-01', 'Sala 2', 'Térreo - Lateral'),
-('agencia-01', 'Sala 3', '2º Andar'),
-('agencia-02', 'Sala 1', 'Térreo - Fundos');
-
-INSERT INTO sala_painel (sala_id, painel_id) VALUES
-(1, 1), -- Sala 1 agencia-01 → Painel 1
-(2, 1), -- Sala 2 agencia-01 → Painel 1
-(3, 2), -- Sala 3 agencia-01 → Painel 2
-(4, 3); -- Sala 1 agencia-02 → Painel 1
+INSERT INTO estacao (agencia_id, tipo_estacao, numero_estacao, localizacao, painel_id) VALUES
+('agencia-01', 'MESA', 1, 'Térreo - Fundos', 1),
+('agencia-01', 'MESA', 2, 'Térreo - Lateral', 1),
+('agencia-01', 'GUICHE', 1, '2º Andar', 2),
+('agencia-02', 'MESA', 1, 'Térreo - Fundos', 3),
+('agencia-02', 'GUICHE', 1, 'Térreo - Lateral', 3);
 
 -- ===========================================
 -- DADOS DE TESTE: PESSOAS E AGENDAMENTOS

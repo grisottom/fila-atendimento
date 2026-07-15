@@ -2,12 +2,12 @@ package com.fila.apiatendimento.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fila.apiatendimento.dto.AtendimentoResponse;
+import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.FilaAtendimento;
 import com.fila.apiatendimento.entity.Painel;
-import com.fila.apiatendimento.entity.Sala;
 import com.fila.apiatendimento.entity.Servico;
+import com.fila.apiatendimento.repository.EstacaoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
-import com.fila.apiatendimento.repository.SalaRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,18 +26,18 @@ public class AtendimentoService {
     private static final Logger log = LoggerFactory.getLogger(AtendimentoService.class);
 
     private final FilaAtendimentoRepository filaRepository;
-    private final SalaRepository salaRepository;
+    private final EstacaoRepository estacaoRepository;
     private final ServicoRepository servicoRepository;
     private final JmsTemplate jmsTemplate;
     private final ObjectMapper objectMapper;
 
     public AtendimentoService(FilaAtendimentoRepository filaRepository,
-                              SalaRepository salaRepository,
+                              EstacaoRepository estacaoRepository,
                               ServicoRepository servicoRepository,
                               JmsTemplate jmsTemplate,
                               ObjectMapper objectMapper) {
         this.filaRepository = filaRepository;
-        this.salaRepository = salaRepository;
+        this.estacaoRepository = estacaoRepository;
         this.servicoRepository = servicoRepository;
         this.jmsTemplate = jmsTemplate;
         this.objectMapper = objectMapper;
@@ -46,41 +46,47 @@ public class AtendimentoService {
     public AtendimentoResponse buscarAtivo(String username) {
         return filaRepository.findFirstByAtendenteUsernameAndStatusInOrderByHorarioChamadaDesc(username, List.of("CHAMANDO", "EM_ATENDIMENTO"))
                 .map(fila -> {
-                    String salaNome = fila.getSalaId() != null
-                            ? salaRepository.findById(fila.getSalaId()).map(s -> s.getNome()).orElse(null)
+                    String estacaoNome = fila.getEstacaoId() != null
+                            ? estacaoRepository.findById(fila.getEstacaoId()).map(Estacao::getNomeExibicao).orElse(null)
                             : null;
-                    return toResponse(fila, salaNome);
+                    return toResponse(fila, estacaoNome);
                 })
                 .orElse(null);
     }
 
     @Transactional
-    public AtendimentoResponse chamarProximo(Integer salaId, String username, List<String> permissoes) {
-        Sala sala = salaRepository.findById(salaId)
-                .orElseThrow(() -> new RuntimeException("Sala não encontrada: " + salaId));
+    public AtendimentoResponse chamarProximo(Integer estacaoId, String username, List<String> permissoes) {
+        Estacao estacao = estacaoRepository.findById(estacaoId)
+                .orElseThrow(() -> new RuntimeException("Estação não encontrada: " + estacaoId));
 
-        if (sala.getPaineis() == null || sala.getPaineis().isEmpty()) {
-            throw new RuntimeException("Sala sem painéis associados");
+        if (estacao.getPainel() == null) {
+            throw new RuntimeException("Estação sem painel associado");
         }
 
         List<FilaAtendimento> emChamada = filaRepository.findByAgenciaIdAndStatusIn(
-                sala.getAgenciaId(), List.of("CHAMANDO"));
-        emChamada.stream()
+                estacao.getAgenciaId(), List.of("CHAMANDO"));
+        FilaAtendimento chamadaAtiva = emChamada.stream()
                 .filter(f -> username.equals(f.getAtendenteUsername()))
-                .forEach(f -> { /* atendente só pode ter 1 chamada ativa */ });
+                .findFirst()
+                .orElse(null);
 
-        FilaAtendimento proximo = filaRepository.findProximoParaAtendimento(sala.getAgenciaId(), permissoes)
+        if (chamadaAtiva != null) {
+            publicarNoPainel(estacao, chamadaAtiva, "CHAMANDO");
+            return toResponse(chamadaAtiva, estacao.getNomeExibicao());
+        }
+
+        FilaAtendimento proximo = filaRepository.findProximoParaAtendimento(estacao.getAgenciaId(), permissoes)
                 .orElseThrow(() -> new RuntimeException("Nenhum atendimento na fila"));
 
         proximo.setStatus("CHAMANDO");
-        proximo.setSalaId(salaId);
+        proximo.setEstacaoId(estacaoId);
         proximo.setAtendenteUsername(username);
         proximo.setHorarioChamada(LocalDateTime.now());
         filaRepository.save(proximo);
 
-        publicarNoPainel(sala, proximo, "CHAMANDO");
+        publicarNoPainel(estacao, proximo, "CHAMANDO");
 
-        return toResponse(proximo, sala.getNome());
+        return toResponse(proximo, estacao.getNomeExibicao());
     }
 
     @Transactional
@@ -88,10 +94,10 @@ public class AtendimentoService {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
-        Sala sala = salaRepository.findById(fila.getSalaId())
-                .orElseThrow(() -> new RuntimeException("Sala não encontrada"));
+        Estacao estacao = estacaoRepository.findById(fila.getEstacaoId())
+                .orElseThrow(() -> new RuntimeException("Estação não encontrada"));
 
-        publicarNoPainel(sala, fila, "CHAMANDO");
+        publicarNoPainel(estacao, fila, "CHAMANDO");
     }
 
     @Transactional
@@ -99,22 +105,22 @@ public class AtendimentoService {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
-        Sala sala = salaRepository.findById(fila.getSalaId()).orElse(null);
+        Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
 
         Integer maxPosicao = filaRepository.findMaxPosicaoFila(fila.getAgenciaId()) + 1;
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(maxPosicao);
         fila.setHorarioAgendado(null);
-        fila.setSalaId(null);
+        fila.setEstacaoId(null);
         fila.setAtendenteUsername(null);
         fila.setHorarioChamada(null);
         filaRepository.save(fila);
 
-        if (sala != null) {
-            publicarNoPainel(sala, fila, "AUSENTE");
+        if (estacao != null) {
+            publicarNoPainel(estacao, fila, "AUSENTE");
         }
 
-        return toResponse(fila, sala != null ? sala.getNome() : null);
+        return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
 
     @Transactional
@@ -126,12 +132,12 @@ public class AtendimentoService {
         fila.setHorarioInicioAtendimento(LocalDateTime.now());
         filaRepository.save(fila);
 
-        Sala sala = salaRepository.findById(fila.getSalaId()).orElse(null);
-        if (sala != null) {
-            publicarNoPainel(sala, fila, "EM_ATENDIMENTO");
+        Estacao estacao = estacaoRepository.findById(fila.getEstacaoId()).orElse(null);
+        if (estacao != null) {
+            publicarNoPainel(estacao, fila, "EM_ATENDIMENTO");
         }
 
-        return toResponse(fila, sala != null ? sala.getNome() : null);
+        return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
 
     @Transactional
@@ -139,41 +145,59 @@ public class AtendimentoService {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
-        Sala sala = fila.getSalaId() != null ? salaRepository.findById(fila.getSalaId()).orElse(null) : null;
+        Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
 
         fila.setStatus("FINALIZADO");
         fila.setHorarioFimAtendimento(LocalDateTime.now());
         filaRepository.save(fila);
 
-        if (sala != null) {
-            publicarNoPainel(sala, fila, "FINALIZADO");
+        if (estacao != null) {
+            publicarNoPainel(estacao, fila, "FINALIZADO");
         }
 
-        return toResponse(fila, sala != null ? sala.getNome() : null);
+        return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
 
-    private void publicarNoPainel(Sala sala, FilaAtendimento fila, String status) {
-        for (Painel painel : sala.getPaineis()) {
-            try {
-                String topico = "agencia." + sala.getAgenciaId() + ".painel." + painel.getNumero();
-                String json = objectMapper.writeValueAsString(Map.of(
-                        "agenciaId", sala.getAgenciaId(),
-                        "painelId", painel.getNumero(),
-                        "senha", fila.getSenha(),
-                        "nomePessoa", fila.getNomePessoa(),
-                        "sala", sala.getNome(),
-                        "status", status
-                ));
-                jmsTemplate.send(topico, session -> session.createTextMessage(json));
-            } catch (Exception e) {
-                log.error("Erro ao publicar no painel {}: {}", painel.getNumero(), e.getMessage());
-            }
+    @Transactional
+    public AtendimentoResponse cancelarAtendimento(@NonNull Integer atendimentoId) {
+        FilaAtendimento fila = filaRepository.findById(atendimentoId)
+                .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
+
+        Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
+
+        fila.setStatus("CANCELADO");
+        fila.setHorarioFimAtendimento(LocalDateTime.now());
+        filaRepository.save(fila);
+
+        if (estacao != null) {
+            publicarNoPainel(estacao, fila, "CANCELADO");
+        }
+
+        return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
+    }
+
+    private void publicarNoPainel(Estacao estacao, FilaAtendimento fila, String status) {
+        Painel painel = estacao.getPainel();
+        if (painel == null) return;
+        try {
+            String topico = "agencia." + estacao.getAgenciaId() + ".painel." + painel.getNumeroPainel();
+            String json = objectMapper.writeValueAsString(Map.of(
+                    "agenciaId", estacao.getAgenciaId(),
+                    "painelId", painel.getNumeroPainel(),
+                    "senha", fila.getSenha(),
+                    "nomePessoa", fila.getNomePessoa(),
+                    "estacao", estacao.getNomeExibicao(),
+                    "status", status
+            ));
+            jmsTemplate.send(topico, session -> session.createTextMessage(json));
+        } catch (Exception e) {
+            log.error("Erro ao publicar no painel {}: {}", painel.getNumeroPainel(), e.getMessage());
         }
     }
 
-    private AtendimentoResponse toResponse(FilaAtendimento fila, String salaNome) {
+    private AtendimentoResponse toResponse(FilaAtendimento fila, String estacaoNome) {
         return new AtendimentoResponse(fila.getId(), fila.getSenha(), fila.getNomePessoa(),
-                fila.getServicoId(), fila.getStatus(), salaNome);
+                fila.getServicoId(), fila.getStatus(), estacaoNome);
     }
 
     public List<Servico> listarServicosPorPermissoes(List<String> permissoes) {

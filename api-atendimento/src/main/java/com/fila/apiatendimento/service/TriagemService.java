@@ -9,6 +9,8 @@ import com.fila.apiatendimento.entity.Pessoa;
 import com.fila.apiatendimento.repository.AgendamentoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.PessoaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,8 +40,10 @@ public class TriagemService {
     @Transactional
     public TriagemResponse recepcionar(TriagemRequest request) {
         Long cpf = Objects.requireNonNull(request.cpf(), "CPF não pode ser nulo");
-        Pessoa pessoa = pessoaRepository.findById(cpf)
-            .orElseThrow(() -> new RuntimeException("Pessoa não encontrada com CPF: " + cpf));
+
+        String nomePessoa = pessoaRepository.findById(cpf)
+                .map(Pessoa::getNome)
+                .orElse(request.nomePessoa());
 
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
         LocalDateTime fimDia = inicioDia.plusDays(1);
@@ -57,7 +61,7 @@ public class TriagemService {
         FilaAtendimento fila = new FilaAtendimento();
         fila.setAgenciaId(request.agenciaId());
         fila.setCpf(request.cpf());
-        fila.setNomePessoa(pessoa.getNome());
+        fila.setNomePessoa(nomePessoa);
         fila.setServicoId(request.servicoId());
         fila.setSenha(senha);
         fila.setHorarioAgendado(agendamento != null ? agendamento.getDataHora() : null);
@@ -67,7 +71,11 @@ public class TriagemService {
 
         filaRepository.save(fila);
 
-        return new TriagemResponse(senha, pessoa.getNome(), request.servicoId(),
+        if (agendamento != null) {
+            agendamentoRepository.delete(agendamento);
+        }
+
+        return new TriagemResponse(senha, nomePessoa, request.servicoId(),
                 agendamento != null ? agendamento.getDataHora() : null);
     }
 
@@ -79,17 +87,16 @@ public class TriagemService {
         return sb.toString();
     }
 
-    public List<AgendamentoResponse> listarAgendamentosDoDia(String agenciaId) {
+    public Page<AgendamentoResponse> listarAgendamentosDoDia(String agenciaId, int page, int size) {
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
         LocalDateTime fimDia = inicioDia.plusDays(1);
 
-        return agendamentoRepository.findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(agenciaId, inicioDia, fimDia)
-                .stream()
+        return agendamentoRepository.findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(
+                agenciaId, inicioDia, fimDia, PageRequest.of(page, size))
                 .map(a -> {
                     String nome = pessoaRepository.findById(a.getCpf())
                             .map(Pessoa::getNome).orElse("Desconhecido");
                     return new AgendamentoResponse(a.getCpf(), nome, a.getServicoId(), a.getDataHora());
-                })
-                .toList();
+                });
     }
 }

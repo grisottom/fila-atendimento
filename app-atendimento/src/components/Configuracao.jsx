@@ -8,7 +8,7 @@ function getStorageKey() {
 
 export default function Configuracao() {
   const [paineis, setPaineis] = useState([]);
-  const [salas, setSalas] = useState([]);
+  const [estacoes, setEstacoes] = useState([]);
   const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
   const [msg, setMsg] = useState("");
 
@@ -16,10 +16,11 @@ export default function Configuracao() {
   const [painelNumero, setPainelNumero] = useState("");
   const [painelLocal, setPainelLocal] = useState("");
 
-  // Sala form
-  const [salaNome, setSalaNome] = useState("");
-  const [salaLocal, setSalaLocal] = useState("");
-  const [salaPainelIds, setSalaPainelIds] = useState([]);
+  // Estacao form
+  const [estacaoTipo, setEstacaoTipo] = useState("MESA");
+  const [estacaoNumero, setEstacaoNumero] = useState("");
+  const [estacaoLocal, setEstacaoLocal] = useState("");
+  const [estacaoPainelId, setEstacaoPainelId] = useState("");
 
   useEffect(() => {
     if (agenciaId) carregarDados();
@@ -29,7 +30,7 @@ export default function Configuracao() {
     localStorage.setItem(getStorageKey(), agenciaId);
     try {
       setPaineis(await api.get(`/api/admin/painel/${agenciaId}`));
-      setSalas(await api.get(`/api/admin/sala/${agenciaId}`));
+      setEstacoes(await api.get(`/api/admin/estacao/${agenciaId}`));
     } catch (e) {
       setMsg("Erro ao carregar: " + e.message);
     }
@@ -38,27 +39,42 @@ export default function Configuracao() {
   async function criarPainel(e) {
     e.preventDefault();
     try {
-      await api.post("/api/admin/painel", { agenciaId, numero: Number(painelNumero), localizacao: painelLocal });
+      await api.post("/api/admin/painel", { agenciaId, numeroPainel: Number(painelNumero), localizacao: painelLocal });
       setPainelNumero(""); setPainelLocal("");
       carregarDados();
       setMsg("Painel criado");
     } catch (err) { setMsg(err.message); }
   }
 
-  async function criarSala(e) {
+  async function criarEstacao(e) {
     e.preventDefault();
     try {
-      await api.post("/api/admin/sala", { agenciaId, nome: salaNome, localizacao: salaLocal, painelIds: salaPainelIds });
-      setSalaNome(""); setSalaLocal(""); setSalaPainelIds([]);
+      await api.post("/api/admin/estacao", { agenciaId, tipoEstacao: estacaoTipo, numeroEstacao: Number(estacaoNumero), localizacao: estacaoLocal, painelId: Number(estacaoPainelId) });
+      setEstacaoTipo("MESA"); setEstacaoNumero(""); setEstacaoLocal(""); setEstacaoPainelId("");
       carregarDados();
-      setMsg("Sala criada");
+      setMsg("Estação criada");
     } catch (err) { setMsg(err.message); }
   }
 
-  function togglePainel(id) {
-    setSalaPainelIds((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
-    );
+  async function excluirPainel(id) {
+    try {
+      await api.delete(`/api/admin/painel/${id}`);
+      carregarDados();
+      setMsg("Painel excluído");
+    } catch (err) { setMsg(err.message); }
+  }
+
+  async function excluirEstacao(id) {
+    try {
+      await api.delete(`/api/admin/estacao/${id}`);
+      carregarDados();
+      setMsg("Estação excluída");
+    } catch (err) { setMsg(err.message); }
+  }
+
+
+  function nomeExibicao(e) {
+    return (e.tipoEstacao === "GUICHE" ? "Guichê" : "Mesa") + " " + e.numeroEstacao;
   }
 
   return (
@@ -72,7 +88,7 @@ export default function Configuracao() {
 
       <hr />
       <h3>Painéis</h3>
-      <ul>{paineis.map((p) => <li key={p.id}>Painel {p.numero} - {p.localizacao}</li>)}</ul>
+      <ul>{paineis.map((p) => <li key={p.id}>Painel {p.numeroPainel} - {p.localizacao} <a href="#" onClick={(e) => { e.preventDefault(); excluirPainel(p.id); }} style={{ color: "red", marginLeft: 8 }}>excluir</a></li>)}</ul>
       <form onSubmit={criarPainel}>
         <input placeholder="Número" value={painelNumero} onChange={(e) => setPainelNumero(e.target.value)} required />
         <input placeholder="Localização" value={painelLocal} onChange={(e) => setPainelLocal(e.target.value)} />
@@ -80,22 +96,46 @@ export default function Configuracao() {
       </form>
 
       <hr />
-      <h3>Salas</h3>
-      <ul>{salas.map((s) => <li key={s.id}>{s.nome} - {s.localizacao}</li>)}</ul>
-      <form onSubmit={criarSala}>
-        <input placeholder="Nome" value={salaNome} onChange={(e) => setSalaNome(e.target.value)} required />
-        <input placeholder="Localização" value={salaLocal} onChange={(e) => setSalaLocal(e.target.value)} />
+      <h3>Estações</h3>
+      <ul>{estacoes.map((e) => <li key={e.id}>{nomeExibicao(e)} - {e.localizacao}</li>)}</ul>
+      <form onSubmit={criarEstacao}>
+        <select value={estacaoTipo} onChange={(e) => setEstacaoTipo(e.target.value)}>
+          <option value="MESA">Mesa</option>
+          <option value="GUICHE">Guichê</option>
+        </select>
+        <input placeholder="Número" value={estacaoNumero} onChange={(e) => setEstacaoNumero(e.target.value)} required />
+        <input placeholder="Localização" value={estacaoLocal} onChange={(e) => setEstacaoLocal(e.target.value)} />
         <div>
-          <label>Painéis:</label>
-          {paineis.map((p) => (
-            <label key={p.id} style={{ marginLeft: 8 }}>
-              <input type="checkbox" checked={salaPainelIds.includes(p.id)} onChange={() => togglePainel(p.id)} />
-              {p.numero}
-            </label>
-          ))}
+          <label>Painel: </label>
+          <select value={estacaoPainelId} onChange={(e) => setEstacaoPainelId(e.target.value)} required>
+            <option value="">Selecione</option>
+            {paineis.map((p) => <option key={p.id} value={p.id}>Painel {p.numeroPainel}</option>)}
+          </select>
         </div>
-        <button type="submit">Criar Sala</button>
+        <button type="submit">Criar Estação</button>
       </form>
+
+      <h3 style={{ marginTop: 24 }}>Estações vs Painéis</h3>
+      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+            <th style={{ padding: "6px 10px" }}>Estação</th>
+            <th style={{ padding: "6px 10px" }}>Localização</th>
+            <th style={{ padding: "6px 10px" }}>Painéis</th>
+            <th style={{ padding: "6px 10px" }}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {estacoes.map((e) => (
+            <tr key={e.id} style={{ borderBottom: "1px solid #eee" }}>
+              <td style={{ padding: "6px 10px" }}>{nomeExibicao(e)}</td>
+              <td style={{ padding: "6px 10px" }}>{e.localizacao}</td>
+              <td style={{ padding: "6px 10px" }}>{e.painel ? `Painel ${e.painel.numeroPainel}` : "-"}</td>
+              <td style={{ padding: "6px 10px" }}><a href="#" onClick={(ev) => { ev.preventDefault(); excluirEstacao(e.id); }} style={{ color: "red" }}>excluir</a></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 package com.fila.apiatendimento.repository;
 
 import com.fila.apiatendimento.entity.Agendamento;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -9,6 +11,6 @@ public interface AgendamentoRepository extends JpaRepository<Agendamento, Intege
     List<Agendamento> findByCpfAndAgenciaIdAndDataHoraBetween(
         Long cpf, String agenciaId, LocalDateTime inicio, LocalDateTime fim);
 
-    List<Agendamento> findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(
-        String agenciaId, LocalDateTime inicio, LocalDateTime fim);
+    Page<Agendamento> findByAgenciaIdAndDataHoraBetweenOrderByDataHoraAsc(
+        String agenciaId, LocalDateTime inicio, LocalDateTime fim, Pageable pageable);
 }

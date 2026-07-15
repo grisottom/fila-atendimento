@@ -6,13 +6,15 @@ function getAgenciaKey() {
   return `app_agencia_${keycloak.tokenParsed?.preferred_username}`;
 }
 
-function getSalaKey() {
-  return `atend_sala_${keycloak.tokenParsed?.preferred_username}`;
+function getEstacaoKey() {
+  return `atend_estacao_${keycloak.tokenParsed?.preferred_username}`;
 }
 
 export default function Atendimento() {
   const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getAgenciaKey()) || "");
-  const [salaId, setSalaId] = useState(localStorage.getItem(getSalaKey()) || "");
+  const [estacaoId, setEstacaoId] = useState("");
+  const [estacaoTipo, setEstacaoTipo] = useState("MESA");
+  const [estacaoNumero, setEstacaoNumero] = useState("");
   const [atendimentoAtual, setAtendimentoAtual] = useState(null);
   const [msg, setMsg] = useState("");
   const [servicos, setServicos] = useState([]);
@@ -51,12 +53,28 @@ export default function Atendimento() {
     } catch (err) { /* ignora */ }
   }
 
+  async function iniciarEstacao() {
+    setMsg("");
+    try {
+      const estacoes = await api.get(`/api/atendimento/estacoes/${agenciaId}`);
+      const encontrada = estacoes.find((e) => e.tipoEstacao === estacaoTipo && e.numeroEstacao === Number(estacaoNumero));
+      if (!encontrada) {
+        setMsg(`Estação ${estacaoTipo === "GUICHE" ? "Guichê" : "Mesa"} ${estacaoNumero} não encontrada`);
+        return;
+      }
+      setEstacaoId(String(encontrada.id));
+      localStorage.setItem(getEstacaoKey(), String(encontrada.id));
+      localStorage.setItem(getAgenciaKey(), agenciaId);
+      setMsg(`Estação iniciada: ${estacaoTipo === "GUICHE" ? "Guichê" : "Mesa"} ${estacaoNumero}`);
+    } catch (err) { setMsg(err.message); }
+  }
+
   async function chamarProximo() {
     setMsg("");
-    localStorage.setItem(getSalaKey(), salaId);
+    localStorage.setItem(getEstacaoKey(), estacaoId);
     localStorage.setItem(getAgenciaKey(), agenciaId);
     try {
-      const res = await api.post("/api/atendimento/chamar", { salaId: Number(salaId) });
+      const res = await api.post("/api/atendimento/chamar", { estacaoId: Number(estacaoId) });
       setAtendimentoAtual(res);
       carregarFila();
     } catch (err) { setMsg(err.message); }
@@ -99,6 +117,16 @@ export default function Atendimento() {
     } catch (err) { setMsg(err.message); }
   }
 
+  async function cancelar() {
+    if (!atendimentoAtual) return;
+    try {
+      await api.post(`/api/atendimento/cancelar/${atendimentoAtual.id}`);
+      setAtendimentoAtual(null);
+      setMsg("Atendimento cancelado");
+      carregarFila();
+    } catch (err) { setMsg(err.message); }
+  }
+
   const emCurso = atendimentoAtual != null;
 
   return (
@@ -106,69 +134,93 @@ export default function Atendimento() {
       <h2>Atendimento</h2>
       <div>
         <label>Agência: </label>
-        <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" disabled={emCurso} />
-        <label style={{ marginLeft: 16 }}>Sala ID: </label>
-        <input value={salaId} onChange={(e) => setSalaId(e.target.value)} placeholder="1" disabled={emCurso} />
-        <button onClick={chamarProximo} disabled={!salaId || !agenciaId || emCurso} style={{ marginLeft: 8 }}>Chamar Próximo</button>
+        <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" disabled={!!estacaoId || emCurso} />
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>Tipo: </label>
+        <select value={estacaoTipo} onChange={(e) => setEstacaoTipo(e.target.value)} disabled={!!estacaoId || emCurso}>
+          <option value="MESA">Mesa</option>
+          <option value="GUICHE">Guichê</option>
+        </select>
+        <label style={{ marginLeft: 8 }}>Número: </label>
+        <input value={estacaoNumero} onChange={(e) => setEstacaoNumero(e.target.value)} placeholder="1" style={{ width: 50 }} disabled={!!estacaoId || emCurso} />
+        <button onClick={iniciarEstacao} disabled={!agenciaId || !estacaoNumero || emCurso} style={{ marginLeft: 8 }}>Iniciar Estação</button>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>Estação: </label>
+        <input value={estacaoId} disabled style={{ width: 40 }} />
+        <button onClick={chamarProximo} disabled={!estacaoId || emCurso} style={{ marginLeft: 8 }}>Chamar Próximo</button>
       </div>
 
       {msg && <p style={{ color: "blue" }}>{msg}</p>}
 
-      {atendimentoAtual && (
-        <div style={{ marginTop: 16, padding: 16, border: "1px solid #333" }}>
-          <h3>Senha: {atendimentoAtual.senha}</h3>
-          <p>Nome: {atendimentoAtual.nomePessoa}</p>
-          <p>Serviço: {atendimentoAtual.servicoId}</p>
-          <p>Sala: {atendimentoAtual.sala}</p>
-          <p>Status: {atendimentoAtual.status}</p>
-          <div style={{ marginTop: 8 }}>
-            {atendimentoAtual.status === "CHAMANDO" && (
-              <>
-                <button onClick={chamarNovamente} style={{ marginRight: 8 }}>Chamar Novamente</button>
-                <button onClick={ausentar} style={{ marginRight: 8 }}>Ausente</button>
-                <button onClick={iniciar}>Iniciar Atendimento</button>
-              </>
+      <div style={{ display: "flex", gap: 24, marginTop: 16, alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {atendimentoAtual ? (
+            <div style={{ padding: 16, border: "1px solid #333" }}>
+              <h3>Senha: {atendimentoAtual.senha}</h3>
+              <p>Nome: {atendimentoAtual.nomePessoa}</p>
+              <p>Serviço: {atendimentoAtual.servicoId}</p>
+              <p>Estação: {atendimentoAtual.estacao}</p>
+              <p>Status: {atendimentoAtual.status}</p>
+              <div style={{ marginTop: 8 }}>
+                {atendimentoAtual.status === "CHAMANDO" && (
+                  <>
+                    <button onClick={chamarNovamente} style={{ marginRight: 8 }}>Chamar Novamente</button>
+                    <button onClick={ausentar} style={{ marginRight: 8 }}>Ausente</button>
+                    <button onClick={iniciar} style={{ marginRight: 8 }}>Iniciar Atendimento</button>
+                    <button onClick={cancelar} style={{ color: "red" }}>Cancelar</button>
+                  </>
+                )}
+                {atendimentoAtual.status === "EM_ATENDIMENTO" && (
+                  <>
+                    <button onClick={finalizar} style={{ marginRight: 8 }}>Finalizar Atendimento</button>
+                    <button onClick={cancelar} style={{ color: "red" }}>Cancelar</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p style={{ opacity: 0.5 }}>Nenhum atendimento em curso</p>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div>
+            <h3>Meus Serviços</h3>
+            {servicos.length === 0 ? <p>Nenhum serviço associado</p> : (
+              <ul>
+                {servicos.map((s) => <li key={s.id}>{s.nome} ({s.permissaoExigida})</li>)}
+              </ul>
             )}
-            {atendimentoAtual.status === "EM_ATENDIMENTO" && (
-              <button onClick={finalizar}>Finalizar Atendimento</button>
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <h3>Fila Aguardando ({fila.length})</h3>
+            {fila.length === 0 ? <p>Nenhum atendimento aguardando</p> : (
+              <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+                    <th style={{ padding: "6px 10px" }}>Posição</th>
+                    <th style={{ padding: "6px 10px" }}>Senha</th>
+                    <th style={{ padding: "6px 10px" }}>Nome</th>
+                    <th style={{ padding: "6px 10px" }}>Serviço</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fila.map((f, i) => (
+                    <tr key={f.id} style={{ borderBottom: "1px solid #eee" }}>
+                      <td style={{ padding: "6px 10px" }}>{i + 1}</td>
+                      <td style={{ padding: "6px 10px", fontWeight: "bold" }}>{f.senha}</td>
+                      <td style={{ padding: "6px 10px" }}>{f.nomePessoa}</td>
+                      <td style={{ padding: "6px 10px" }}>{f.servicoId}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
-      )}
-
-      <div style={{ marginTop: 32 }}>
-        <h3>Meus Serviços</h3>
-        {servicos.length === 0 ? <p>Nenhum serviço associado</p> : (
-          <ul>
-            {servicos.map((s) => <li key={s.id}>{s.nome} ({s.permissaoExigida})</li>)}
-          </ul>
-        )}
-      </div>
-
-      <div style={{ marginTop: 24 }}>
-        <h3>Fila Disponível ({fila.length})</h3>
-        {fila.length === 0 ? <p>Nenhum atendimento aguardando</p> : (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
-                <th style={{ padding: "6px 10px" }}>Posição</th>
-                <th style={{ padding: "6px 10px" }}>Senha</th>
-                <th style={{ padding: "6px 10px" }}>Nome</th>
-                <th style={{ padding: "6px 10px" }}>Serviço</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fila.map((f, i) => (
-                <tr key={f.id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "6px 10px" }}>{i + 1}</td>
-                  <td style={{ padding: "6px 10px", fontWeight: "bold" }}>{f.senha}</td>
-                  <td style={{ padding: "6px 10px" }}>{f.nomePessoa}</td>
-                  <td style={{ padding: "6px 10px" }}>{f.servicoId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
     </div>
   );

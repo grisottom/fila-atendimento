@@ -2,12 +2,12 @@ Quero criar um sistema de gerenciamento de fila de atendimentos que ocorrem em a
 
 Os atendimentos seguem a ordem de agendamento e a ordem de chegada de pessoas nas agências.
 
-Cada pessoa que chega numa agência para ser atendido passa por uma triagem, depois da triagem a pessoa é chamada por um painel e se dirige para uma sala para ser atendido.
+Cada pessoa que chega numa agência para ser atendido passa por uma triagem, depois da triagem a pessoa é chamada por um painel e se dirige para uma estação (mesa ou guichê) para ser atendido.
 
 O ideal a pessoa tenha agendamento feito e chegue antes do horário, a pessoa com agendamento feito tem prioridade para ser atendida em relação à quem chega sem horário agendado no atendimento chamado de expontâneo. 
 A ordem de atendimento dos espontâneos segue a ordem de chegada dos espontâneos
 
-Os atendentes ficam em salas e chamam o próximo da fila através de um painel. É no funcionamento desse painel que quero me concentrar. Um painel atende várias salas, portanto a mensagem que será vista pela pessoa indica a sala de atendimento. 
+Os atendentes ficam em estações (mesas ou guichês) e chamam o próximo da fila através de um painel. É no funcionamento desse painel que quero me concentrar. Um painel atende várias estações, portanto a mensagem que será vista pela pessoa indica a estação de atendimento (ex: Mesa 3, Guichê 1). 
 
 O atendimento, seja agendado ou expontâneo, é sempre para um serviço especifico, o que significa que tanto no agendamento quanto no atendimento expontâneo a pessoa precisa informar o serviço procurado.
 
@@ -32,12 +32,14 @@ Os atendentes terão permissões, também gerido por keycloak
 
 Os usuários pré cadastrados nos servicos na agencia agencia-01, no banco de dados
 - ger, pemissão admin
-- atend-01, permissão basico,
-- atend-02, permissão normal
-- atend-03, permissão especial
-- atend-04, permissões basica, normal e especial
+- atend-triagem, permissão basica,
+- atend-triagem-2, permissão basica,
+- atend-normal, permissão normal
+- atend-especial, permissão especial
+- atend-all, permissões basica, normal e especial
+- atend-all-2, permissões basica, normal e especial
 
-A senha para logar serão identicos nomes dos usuários adicionando -pwd no final
+A senha para logar de todos os usuários é pwd
 
 Os atendentes tem capacidades distintas e são treinados para um subonjunto de serviços, 
 A relação atendente vs serviços se dá através da permissão exigida para o serviço e a permissão que o usuário possui. 
@@ -60,11 +62,11 @@ Quero criar 2 aplicações,
 
 ## Tela de chamadas
 
-Mostra os atendimentos em curso, senha e sala
+Mostra os atendimentos em curso, senha e estação
 
 - chamando 
 - em atendimento
-- ausente (a pessoa chamada mas não apareceu na sala)
+- ausente (a pessoa chamada mas não apareceu na estação)
 
 # A aplicação Painel tem uma API backend em Spring-Boot chamada API-Painel, 
 
@@ -81,7 +83,7 @@ A ideia é que Painel + API sejam 'plugáveis' e precisaremos criar uma interfac
 ## Tela de configuração para Admin
 - cadastro de agência
 - cadastra paineis na Agencia do usuário Admin, informa localizacão (ex. térreo)
-- cadastra salas na Agencia do usuário Admin, informa localizacao (ex. fundos, ex. 2o andar) e indica paineis para a sala, minimo 1
+- cadastra estações na Agencia do usuário Admin, informa tipo (MESA ou GUICHE), número e localização (ex. fundos, ex. 2o andar) e indica paineis para a estação, minimo 1
 
 ## Tela de triagem, feita por atendente com permissão basica ou pelo Admin
 - recepção da pessoa na Agência, por CPF
@@ -89,9 +91,9 @@ A ideia é que Painel + API sejam 'plugáveis' e precisaremos criar uma interfac
 - gera senha aleatória, 5 caracteres ASCII, sem acento, MAIUSCULAS e NUMEROS, e insere na tabela fila de atendimentos, senha, CPF, nome, horário agendado (se existir)
 
 ## Tela de Atendimento, para atendente e Admin
-- indica a agência e em que 'sala' o atendente está realizando o atendendimento
+- indica a agência e em que 'estação' o atendente está realizando o atendimento
 - chama o próximo 
-- ausenta o próximo (não apareceu na sala, vai pro fim da fila)
+- ausenta o próximo (não apareceu na estação, vai pro fim da fila)
 - inicia o atendimento 
 - finaliza o atendimento
 
@@ -110,8 +112,8 @@ Objetivo receber as mensagens destinadas a um painel
 - Quando uma mensagem é publicada naquele endereço, o Artemis entrega apenas para a instância Java onde o Painel cliente está pendurado. Quando o cliente desconecta, o Artemis destrói tudo automaticamente.
 
 Aplicacao Atendimento
-- a aplicação do Atendimento chama uma API Atendimento para obter o próximo atendimento da agencia, informando a 'sala' no chamado
-- a API Atendimento obtém os 'paineis' associados à 'sala' do chamado, caso não exista retorna erro
+- a aplicação do Atendimento chama uma API Atendimento para obter o próximo atendimento da agencia, informando a 'estação' no chamado
+- a API Atendimento obtém os 'paineis' associados à 'estação' do chamado, caso não exista retorna erro
 - a API Atendimento chama uma função que obtém o próximo atendimento para a Agência (usar controle de concorrência no registro). Obs, fazer um join com os serviços atendidos pelo atendente para selecionar o próximo
 - a API Atendimento, para cada painel, entrega o Payload do atendimento para API do Painel de Atualizacao que publica no Artemis (chamada REST)
 - A API Atendimento marca registro como 'chamado'
@@ -127,7 +129,7 @@ Quando o Painel (re)conecta via SSE, ele precisa recuperar os atendimentos ativo
 Fluxo:
 - Ao registrar a conexão SSE, a API-Painel publica uma mensagem {agenciaId, painelId} no tópico "replay-request" do Artemis
 - A API-Atendimento escuta o tópico "replay-request"
-- Ao receber, consulta o banco por atendimentos ativos da agência cujas salas estejam associadas ao painel solicitado
+- Ao receber, consulta o banco por atendimentos ativos da agência cujas estações estejam associadas ao painel solicitado
 - Republica cada atendimento ativo no tópico do painel via /api/internal/publicar
 - O SSE já está escutando e entrega os eventos ao browser, sem loop
 

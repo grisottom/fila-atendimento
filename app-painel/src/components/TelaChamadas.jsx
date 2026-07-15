@@ -11,9 +11,22 @@ const blinkKeyframes = `
 const API_URL = process.env.REACT_APP_API_PAINEL_URL || "";
 
 export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, username }) {
-  const [chamadas, setChamadas] = useState([]);
-  const [historico, setHistorico] = useState([]);
+  const storageKey = `painel-${agenciaId}-${painelNumero}`;
+
+  function carregarStorage(chave) {
+    const hoje = new Date().toDateString();
+    const salvo = JSON.parse(localStorage.getItem(chave));
+    if (salvo && salvo.data === hoje) return salvo.itens;
+    localStorage.removeItem(chave);
+    return [];
+  }
+
+  const [chamadas, setChamadas] = useState(() => carregarStorage(`${storageKey}-chamadas`));
+  const [historico, setHistorico] = useState(() => carregarStorage(`${storageKey}-historico`));
   const eventSourceRef = useRef(null);
+
+  useEffect(() => { localStorage.setItem(`${storageKey}-chamadas`, JSON.stringify({ data: new Date().toDateString(), itens: chamadas })); }, [chamadas]);
+  useEffect(() => { localStorage.setItem(`${storageKey}-historico`, JSON.stringify({ data: new Date().toDateString(), itens: historico })); }, [historico]);
 
   useEffect(() => {
     conectarSSE();
@@ -42,11 +55,12 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
 
   function atualizarChamadas(prev, nova) {
     const filtrado = prev.filter((c) => c.senha !== nova.senha);
-    if (nova.status === "FINALIZADO") return filtrado;
+    if (nova.status === "FINALIZADO" || nova.status === "CANCELADO") return filtrado;
     return [nova, ...filtrado].slice(0, 10);
   }
 
   function atualizarHistorico(prev, nova) {
+    if (nova.status === "CANCELADO") return prev.filter((h) => h.senha !== nova.senha);
     const entry = { ...nova, timestamp: new Date().toISOString() };
     const filtrado = prev.filter((h) => h.senha !== nova.senha);
     return [entry, ...filtrado];
@@ -78,7 +92,7 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
           }}>
             <div style={{ fontSize: 36, fontWeight: "bold" }}>{c.senha}</div>
             <div style={{ fontSize: 18, marginTop: 8 }}>{c.nomePessoa}</div>
-            <div style={{ marginTop: 8, opacity: 0.8 }}>Sala: {c.sala}</div>
+            <div style={{ marginTop: 8, opacity: 0.8 }}>{c.estacao}</div>
             <div style={{
               marginTop: 8,
               padding: "4px 12px",
@@ -104,7 +118,7 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
                 <th style={{ padding: "8px 12px" }}>Horário</th>
                 <th style={{ padding: "8px 12px" }}>Senha</th>
                 <th style={{ padding: "8px 12px" }}>Nome</th>
-                <th style={{ padding: "8px 12px" }}>Sala</th>
+                <th style={{ padding: "8px 12px" }}>Estação</th>
                 <th style={{ padding: "8px 12px" }}>Status</th>
               </tr>
             </thead>
@@ -114,7 +128,7 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
                   <td style={{ padding: "8px 12px" }}>{new Date(h.timestamp).toLocaleTimeString()}</td>
                   <td style={{ padding: "8px 12px", fontWeight: "bold" }}>{h.senha}</td>
                   <td style={{ padding: "8px 12px" }}>{h.nomePessoa}</td>
-                  <td style={{ padding: "8px 12px" }}>{h.sala}</td>
+                  <td style={{ padding: "8px 12px" }}>{h.estacao}</td>
                   <td style={{ padding: "8px 12px" }}>
                     <span style={{
                       padding: "2px 8px",

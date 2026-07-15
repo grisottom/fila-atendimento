@@ -5,6 +5,6 @@ public record PainelUpdateDTO(
     Integer painelId,
     String senha,
     String nomePessoa,
-    String sala,
-    String status // CHAMANDO, EM_ATENDIMENTO, AUSENTE
+    String estacao,
+    String status // CHAMANDO, EM_ATENDIMENTO, AUSENTE, CANCELADO
 ) {}

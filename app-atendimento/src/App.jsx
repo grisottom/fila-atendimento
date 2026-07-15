@@ -24,6 +24,8 @@ export default function App() {
         <span style={{ marginLeft: "auto" }}>
           {keycloak.tokenParsed?.preferred_username}
           {" | "}
+          <button onClick={() => { localStorage.clear(); keycloak.logout(); }}>Sair - Limpar Storage</button>
+          {" | "}
           <button onClick={() => keycloak.logout()}>Sair</button>
         </span>
       </nav>

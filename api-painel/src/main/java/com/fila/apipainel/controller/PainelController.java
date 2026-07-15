@@ -1,9 +1,7 @@
 package com.fila.apipainel.controller;
 
-import com.fila.apipainel.dto.PainelUpdateDTO;
 import com.fila.apipainel.service.PainelSseService;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
