@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import useSWR from "swr";
 import { api } from "../services/api";
 import keycloak from "../services/keycloak";
 
@@ -10,25 +11,40 @@ function getEstacaoKey() {
   return `atend_estacao_${keycloak.tokenParsed?.preferred_username}`;
 }
 
+function getEstacaoTipoKey() {
+  return `atend_estacao_tipo_${keycloak.tokenParsed?.preferred_username}`;
+}
+
+function getEstacaoNumeroKey() {
+  return `atend_estacao_numero_${keycloak.tokenParsed?.preferred_username}`;
+}
+
 export default function Atendimento() {
   const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getAgenciaKey()) || "");
   const [estacaoId, setEstacaoId] = useState("");
-  const [estacaoTipo, setEstacaoTipo] = useState("MESA");
-  const [estacaoNumero, setEstacaoNumero] = useState("");
+  const [estacaoTipo, setEstacaoTipo] = useState(localStorage.getItem(getEstacaoTipoKey()) || "MESA");
+  const [estacaoNumero, setEstacaoNumero] = useState(localStorage.getItem(getEstacaoNumeroKey()) || "");
   const [atendimentoAtual, setAtendimentoAtual] = useState(null);
   const [msg, setMsg] = useState("");
   const [servicos, setServicos] = useState([]);
-  const [fila, setFila] = useState([]);
+
+  const btnIniciarRef = useRef(null);
+
+  const { data: fila = [], mutate: mutarFila } = useSWR(
+    agenciaId ? `/api/atendimento/fila-disponivel?agenciaId=${agenciaId}` : null,
+    (url) => api.get(url),
+    { refreshInterval: 5000 }
+  );
 
   useEffect(() => {
     carregarAtivo();
     carregarServicos();
+    btnIniciarRef.current?.focus();
   }, []);
 
   useEffect(() => {
     if (agenciaId) {
       localStorage.setItem(getAgenciaKey(), agenciaId);
-      carregarFila();
     }
   }, [agenciaId]);
 
@@ -46,13 +62,6 @@ export default function Atendimento() {
     } catch (err) { /* ignora */ }
   }
 
-  async function carregarFila() {
-    try {
-      const res = await api.get(`/api/atendimento/fila-disponivel?agenciaId=${agenciaId}`);
-      setFila(res || []);
-    } catch (err) { /* ignora */ }
-  }
-
   async function iniciarEstacao() {
     setMsg("");
     try {
@@ -64,6 +73,8 @@ export default function Atendimento() {
       }
       setEstacaoId(String(encontrada.id));
       localStorage.setItem(getEstacaoKey(), String(encontrada.id));
+      localStorage.setItem(getEstacaoTipoKey(), estacaoTipo);
+      localStorage.setItem(getEstacaoNumeroKey(), estacaoNumero);
       localStorage.setItem(getAgenciaKey(), agenciaId);
       setMsg(`Estação iniciada: ${estacaoTipo === "GUICHE" ? "Guichê" : "Mesa"} ${estacaoNumero}`);
     } catch (err) { setMsg(err.message); }
@@ -76,7 +87,7 @@ export default function Atendimento() {
     try {
       const res = await api.post("/api/atendimento/chamar", { estacaoId: Number(estacaoId) });
       setAtendimentoAtual(res);
-      carregarFila();
+      mutarFila();
     } catch (err) { setMsg(err.message); }
   }
 
@@ -86,7 +97,7 @@ export default function Atendimento() {
       await api.post(`/api/atendimento/ausentar/${atendimentoAtual.id}`);
       setAtendimentoAtual(null);
       setMsg("Pessoa ausente - voltou para o fim da fila");
-      carregarFila();
+      mutarFila();
     } catch (err) { setMsg(err.message); }
   }
 
@@ -113,7 +124,7 @@ export default function Atendimento() {
       await api.post(`/api/atendimento/finalizar/${atendimentoAtual.id}`);
       setAtendimentoAtual(null);
       setMsg("Atendimento finalizado");
-      carregarFila();
+      mutarFila();
     } catch (err) { setMsg(err.message); }
   }
 
@@ -122,8 +133,8 @@ export default function Atendimento() {
     try {
       await api.post(`/api/atendimento/cancelar/${atendimentoAtual.id}`);
       setAtendimentoAtual(null);
-      setMsg("Atendimento cancelado");
-      carregarFila();
+      setMsg("Atendimento cancelado, voltou para AGUARDANDO");
+      mutarFila();
     } catch (err) { setMsg(err.message); }
   }
 
@@ -144,7 +155,7 @@ export default function Atendimento() {
         </select>
         <label style={{ marginLeft: 8 }}>Número: </label>
         <input value={estacaoNumero} onChange={(e) => setEstacaoNumero(e.target.value)} placeholder="1" style={{ width: 50 }} disabled={!!estacaoId || emCurso} />
-        <button onClick={iniciarEstacao} disabled={!agenciaId || !estacaoNumero || emCurso} style={{ marginLeft: 8 }}>Iniciar Estação</button>
+        <button ref={btnIniciarRef} onClick={iniciarEstacao} disabled={!agenciaId || !estacaoNumero || emCurso} style={{ marginLeft: 8 }}>Iniciar Estação</button>
       </div>
       <div style={{ marginTop: 8 }}>
         <label>Estação: </label>

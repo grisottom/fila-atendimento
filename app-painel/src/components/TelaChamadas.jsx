@@ -8,7 +8,7 @@ const blinkKeyframes = `
 }
 `;
 
-const API_URL = process.env.REACT_APP_API_PAINEL_URL || "";
+const API_URL = import.meta.env.VITE_API_PAINEL_URL || "";
 
 export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, username }) {
   const storageKey = `painel-${agenciaId}-${painelNumero}`;
@@ -55,12 +55,12 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
 
   function atualizarChamadas(prev, nova) {
     const filtrado = prev.filter((c) => c.senha !== nova.senha);
-    if (nova.status === "FINALIZADO" || nova.status === "CANCELADO") return filtrado;
+    if (nova.status === "FINALIZADO") return filtrado;
     return [nova, ...filtrado].slice(0, 10);
   }
 
   function atualizarHistorico(prev, nova) {
-    if (nova.status === "CANCELADO") return prev.filter((h) => h.senha !== nova.senha);
+    if (nova.status === "AGUARDANDO") return prev.filter((h) => h.senha !== nova.senha);
     const entry = { ...nova, timestamp: new Date().toISOString() };
     const filtrado = prev.filter((h) => h.senha !== nova.senha);
     return [entry, ...filtrado];
@@ -124,7 +124,7 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
             </thead>
             <tbody>
               {historico.map((h) => (
-                <tr key={h.senha} style={{ borderTop: "1px solid #333" }}>
+                <tr key={h.senha + h.status} style={{ borderTop: "1px solid #333" }}>
                   <td style={{ padding: "8px 12px" }}>{new Date(h.timestamp).toLocaleTimeString()}</td>
                   <td style={{ padding: "8px 12px", fontWeight: "bold" }}>{h.senha}</td>
                   <td style={{ padding: "8px 12px" }}>{h.nomePessoa}</td>

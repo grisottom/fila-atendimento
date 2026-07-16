@@ -1,6 +1,6 @@
 import keycloak from "./keycloak";
 
-const API_URL = process.env.REACT_APP_API_URL || "";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 async function request(method, path, body) {
   await keycloak.updateToken(30);
@@ -23,5 +23,6 @@ async function request(method, path, body) {
 export const api = {
   get: (path) => request("GET", path),
   post: (path, body) => request("POST", path, body),
+  put: (path, body) => request("PUT", path, body),
   delete: (path) => request("DELETE", path),
 };

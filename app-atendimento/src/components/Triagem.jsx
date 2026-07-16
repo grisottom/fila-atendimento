@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import useSWR from "swr";
 import { api } from "../services/api";
 import keycloak from "../services/keycloak";
 
@@ -33,12 +34,18 @@ export default function Triagem() {
   const [nomePessoa, setNomePessoa] = useState("");
   const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
   const [servicoId, setServicoId] = useState("");
+  const [atendimentoId, setAtendimentoId] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [erro, setErro] = useState("");
   const [agendamentos, setAgendamentos] = useState([]);
   const [agendPagina, setAgendPagina] = useState(0);
   const [agendTotalPaginas, setAgendTotalPaginas] = useState(0);
   const [agendTotal, setAgendTotal] = useState(0);
+  const { data: esperandoAtendimento = [], mutate: mutarEsperando } = useSWR(
+    agenciaId ? `/api/triagem/atendimentos/${agenciaId}` : null,
+    (url) => api.get(url),
+    { refreshInterval: 5000 }
+  );
   const [historico, setHistorico] = useState(carregarHistorico);
   const [histPagina, setHistPagina] = useState(0);
 
@@ -52,7 +59,7 @@ export default function Triagem() {
   }, []);
 
   useEffect(() => {
-    if (agenciaId) carregarAgendamentos();
+    if (agenciaId) { carregarAgendamentos(); }
   }, [agenciaId]);
 
   async function carregarAgendamentos(page = agendPagina) {
@@ -65,6 +72,7 @@ export default function Triagem() {
     } catch (e) { /* ignora */ }
   }
 
+
   const servicos = [
     { id: "servico-basico", nome: "Serviço Básico" },
     { id: "servico-normal-01", nome: "Serviço Normal 01" },
@@ -72,21 +80,39 @@ export default function Triagem() {
     { id: "servico-especial-01", nome: "Serviço Especial 01" },
   ];
 
+  function selecionarAtendimento(a) {
+    setCpf(String(a.cpf));
+    setNomePessoa(a.nomePessoa);
+    setServicoId(a.servicoId);
+    setAtendimentoId(a.id);
+  }
+
+  function cancelarAlteracao() {
+    setCpf(""); setNomePessoa(""); setServicoId(""); setAtendimentoId(null);
+    cpfRef.current?.focus();
+  }
+
   async function recepcionar(e) {
     e.preventDefault();
     setErro(""); setResultado(null);
     localStorage.setItem(getStorageKey(), agenciaId);
     try {
-      const res = await api.post("/api/triagem/recepcionar", {
-        cpf: Number(cpf), nomePessoa, agenciaId, servicoId,
-      });
+      let res;
+      if (atendimentoId) {
+        res = await api.put(`/api/triagem/atualizar/${atendimentoId}`, { servicoId });
+      } else {
+        res = await api.post("/api/triagem/recepcionar", {
+          cpf: Number(cpf), nomePessoa, agenciaId, servicoId,
+        });
+        const entry = { ...res, hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
+        const novo = [entry, ...historico];
+        setHistorico(novo);
+        salvarHistorico(novo);
+      }
       setResultado(res);
-      const entry = { ...res, hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
-      const novo = [entry, ...historico];
-      setHistorico(novo);
-      salvarHistorico(novo);
       dialogRef.current?.showModal();
       carregarAgendamentos(0);
+      mutarEsperando();
     } catch (err) {
       setErro(err.message);
     }
@@ -98,7 +124,7 @@ export default function Triagem() {
 
   function fecharDialog() {
     dialogRef.current?.close();
-    setCpf(""); setNomePessoa(""); setServicoId("");
+    setCpf(""); setNomePessoa(""); setServicoId(""); setAtendimentoId(null);
     cpfRef.current?.focus();
     setHistorico(carregarHistorico());
   }
@@ -128,7 +154,7 @@ export default function Triagem() {
         </div>
         <div>
           <label>CPF: </label>
-          <input ref={cpfRef} value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="11122233344" required />
+          <input ref={cpfRef} value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="11122233344" required disabled={!!atendimentoId} />
         </div>
         <div>
           <label>Nome: </label>
@@ -140,6 +166,11 @@ export default function Triagem() {
             <option value="">Selecione</option>
             {servicos.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
           </select>
+        </div>
+        <div>
+          <label>Id Atendimento: </label>
+          <input value={atendimentoId || ""} disabled style={{ width: 80 }} />
+          {atendimentoId && <button type="button" onClick={cancelarAlteracao} style={{ marginLeft: 8 }}>Cancelar alteração</button>}
         </div>
         <button type="submit">Recepcionar</button>
       </form>
@@ -163,38 +194,35 @@ export default function Triagem() {
         </div>
       </dialog>
 
-      {historico.length > 0 && (
+      {esperandoAtendimento.length > 0 && (
         <div style={{ marginTop: 32 }}>
-          <h3>Senhas geradas hoje ({historico.length})</h3>
+          <h3> Aguardando atendimento — {agenciaId} ({esperandoAtendimento.length})</h3>
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
-                <th style={{ padding: "6px 10px" }}>Hora</th>
+                <th style={{ padding: "6px 10px" }}>Id_Atend</th>
                 <th style={{ padding: "6px 10px" }}>Senha</th>
+                <th style={{ padding: "6px 10px" }}>CPF</th>
                 <th style={{ padding: "6px 10px" }}>Nome</th>
                 <th style={{ padding: "6px 10px" }}>Serviço</th>
+                <th style={{ padding: "6px 10px" }}>Status</th>
               </tr>
             </thead>
             <tbody>
-              {historico.slice(histPagina * 5, histPagina * 5 + 5).map((h, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "6px 10px" }}>{h.hora}</td>
+              {esperandoAtendimento.map((a) => (
+                <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 10px" }}>
-                    <a href="#" onClick={(e) => { e.preventDefault(); abrirSenha(h); }} style={{ color: "#1976d2", cursor: "pointer" }}>{h.senha}</a>
+                    <a href="#" onClick={(e) => { e.preventDefault(); selecionarAtendimento(a); }} style={{ color: "#1976d2", cursor: "pointer" }}>{a.id}</a>
                   </td>
-                  <td style={{ padding: "6px 10px" }}>{h.nomePessoa}</td>
-                  <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === h.servicoId)?.nome || h.servicoId}</td>
+                  <td style={{ padding: "6px 10px", fontWeight: "bold" }}>{a.senha}</td>
+                  <td style={{ padding: "6px 10px" }}>{a.cpf}</td>
+                  <td style={{ padding: "6px 10px" }}>{a.nomePessoa}</td>
+                  <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === a.servicoId)?.nome || a.servicoId}</td>
+                  <td style={{ padding: "6px 10px", color: a.status === "AUSENTE" ? "orange" : "inherit" }}>{a.status}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {Math.ceil(historico.length / 5) > 1 && (
-            <div style={{ marginTop: 8 }}>
-              <button onClick={() => setHistPagina(p => p - 1)} disabled={histPagina === 0}>Anterior</button>
-              <span style={{ margin: "0 12px" }}>Página {histPagina + 1} de {Math.ceil(historico.length / 5)}</span>
-              <button onClick={() => setHistPagina(p => p + 1)} disabled={(histPagina + 1) * 5 >= historico.length}>Próxima</button>
-            </div>
-          )}
         </div>
       )}
 
@@ -228,6 +256,41 @@ export default function Triagem() {
               <button onClick={() => carregarAgendamentos(agendPagina - 1)} disabled={agendPagina === 0}>Anterior</button>
               <span style={{ margin: "0 12px" }}>Página {agendPagina + 1} de {agendTotalPaginas}</span>
               <button onClick={() => carregarAgendamentos(agendPagina + 1)} disabled={agendPagina + 1 >= agendTotalPaginas}>Próxima</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {historico.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <h3>Senhas geradas hoje ({historico.length})</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+                <th style={{ padding: "6px 10px" }}>Hora</th>
+                <th style={{ padding: "6px 10px" }}>Senha</th>
+                <th style={{ padding: "6px 10px" }}>Nome</th>
+                <th style={{ padding: "6px 10px" }}>Serviço</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historico.slice(histPagina * 5, histPagina * 5 + 5).map((h, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "6px 10px" }}>{h.hora}</td>
+                  <td style={{ padding: "6px 10px" }}>
+                    <a href="#" onClick={(e) => { e.preventDefault(); abrirSenha(h); }} style={{ color: "#1976d2", cursor: "pointer" }}>{h.senha}</a>
+                  </td>
+                  <td style={{ padding: "6px 10px" }}>{h.nomePessoa}</td>
+                  <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === h.servicoId)?.nome || h.servicoId}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {Math.ceil(historico.length / 5) > 1 && (
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setHistPagina(p => p - 1)} disabled={histPagina === 0}>Anterior</button>
+              <span style={{ margin: "0 12px" }}>Página {histPagina + 1} de {Math.ceil(historico.length / 5)}</span>
+              <button onClick={() => setHistPagina(p => p + 1)} disabled={(histPagina + 1) * 5 >= historico.length}>Próxima</button>
             </div>
           )}
         </div>

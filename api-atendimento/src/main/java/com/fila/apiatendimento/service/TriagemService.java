@@ -1,6 +1,7 @@
 package com.fila.apiatendimento.service;
 
 import com.fila.apiatendimento.dto.AgendamentoResponse;
+import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.dto.TriagemRequest;
 import com.fila.apiatendimento.dto.TriagemResponse;
 import com.fila.apiatendimento.entity.Agendamento;
@@ -98,5 +99,23 @@ public class TriagemService {
                             .map(Pessoa::getNome).orElse("Desconhecido");
                     return new AgendamentoResponse(a.getCpf(), nome, a.getServicoId(), a.getDataHora());
                 });
+    }
+
+    public List<AtendimentoResponse> listarAtendimentosDoDiaEsperando(String agenciaId) {
+        return filaRepository.findByAgenciaIdAndStatusIn(agenciaId, List.of("AGUARDANDO", "CANCELADO", "AUSENTE"))
+                .stream()
+                .map(f -> new AtendimentoResponse(f.getId(), f.getSenha(), f.getCpf(), f.getNomePessoa(),
+                        f.getServicoId(), f.getStatus(), null))
+                .toList();
+    }
+
+    @Transactional
+    public TriagemResponse atualizarServico(Integer id, String servicoId) {
+        FilaAtendimento fila = filaRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Atendimento não encontrado: " + id));
+        fila.setServicoId(servicoId);
+        fila.setStatus("AGUARDANDO");
+        filaRepository.save(fila);
+        return new TriagemResponse(fila.getSenha(), fila.getNomePessoa(), servicoId, fila.getHorarioAgendado());
     }
 }

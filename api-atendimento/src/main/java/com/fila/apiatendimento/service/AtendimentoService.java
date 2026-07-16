@@ -108,12 +108,8 @@ public class AtendimentoService {
         Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
 
         Integer maxPosicao = filaRepository.findMaxPosicaoFila(fila.getAgenciaId()) + 1;
-        fila.setStatus("AGUARDANDO");
+        fila.setStatus("AUSENTE");
         fila.setPosicaoFila(maxPosicao);
-        fila.setHorarioAgendado(null);
-        fila.setEstacaoId(null);
-        fila.setAtendenteUsername(null);
-        fila.setHorarioChamada(null);
         filaRepository.save(fila);
 
         if (estacao != null) {
@@ -145,7 +141,8 @@ public class AtendimentoService {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
 
-        Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
+        Integer estacaoIdSalvo = fila.getEstacaoId();
+        Estacao estacao = estacaoIdSalvo != null ? estacaoRepository.findById(estacaoIdSalvo).orElse(null) : null;
 
         fila.setStatus("FINALIZADO");
         fila.setHorarioFimAtendimento(LocalDateTime.now());
@@ -153,6 +150,8 @@ public class AtendimentoService {
 
         if (estacao != null) {
             publicarNoPainel(estacao, fila, "FINALIZADO");
+        } else {
+            log.warn("finalizarAtendimento: estacaoId nulo para atendimento {}, não publicou no painel", atendimentoId);
         }
 
         return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
@@ -166,7 +165,7 @@ public class AtendimentoService {
         Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
 
         fila.setStatus("CANCELADO");
-        fila.setHorarioFimAtendimento(LocalDateTime.now());
+        fila.setHorarioFimAtendimento(null);
         filaRepository.save(fila);
 
         if (estacao != null) {
@@ -196,7 +195,7 @@ public class AtendimentoService {
     }
 
     private AtendimentoResponse toResponse(FilaAtendimento fila, String estacaoNome) {
-        return new AtendimentoResponse(fila.getId(), fila.getSenha(), fila.getNomePessoa(),
+        return new AtendimentoResponse(fila.getId(), fila.getSenha(), fila.getCpf(), fila.getNomePessoa(),
                 fila.getServicoId(), fila.getStatus(), estacaoNome);
     }
 
