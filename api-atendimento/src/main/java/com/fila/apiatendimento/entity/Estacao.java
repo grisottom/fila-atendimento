@@ -37,7 +37,11 @@ public class Estacao {
     public void setPainel(Painel painel) { this.painel = painel; }
 
     public String getNomeExibicao() {
-        String tipoLabel = "GUICHE".equals(tipoEstacao) ? "Guichê" : "Mesa";
+        String tipoLabel = switch (tipoEstacao) {
+            case "GUICHE" -> "Guichê";
+            case "SALA" -> "Sala";
+            default -> "Mesa";
+        };
         return tipoLabel + " " + numeroEstacao;
     }
 }

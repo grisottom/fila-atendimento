@@ -68,7 +68,7 @@ export default function Atendimento() {
       const estacoes = await api.get(`/api/atendimento/estacoes/${agenciaId}`);
       const encontrada = estacoes.find((e) => e.tipoEstacao === estacaoTipo && e.numeroEstacao === Number(estacaoNumero));
       if (!encontrada) {
-        setMsg(`Estação ${estacaoTipo === "GUICHE" ? "Guichê" : "Mesa"} ${estacaoNumero} não encontrada`);
+        setMsg(`Estação ${{ GUICHE: "Guichê", SALA: "Sala" }[estacaoTipo] ?? "Mesa"} ${estacaoNumero} não encontrada`);
         return;
       }
       setEstacaoId(String(encontrada.id));
@@ -76,7 +76,7 @@ export default function Atendimento() {
       localStorage.setItem(getEstacaoTipoKey(), estacaoTipo);
       localStorage.setItem(getEstacaoNumeroKey(), estacaoNumero);
       localStorage.setItem(getAgenciaKey(), agenciaId);
-      setMsg(`Estação iniciada: ${estacaoTipo === "GUICHE" ? "Guichê" : "Mesa"} ${estacaoNumero}`);
+      setMsg(`Estação iniciada: ${{ GUICHE: "Guichê", SALA: "Sala" }[estacaoTipo] ?? "Mesa"} ${estacaoNumero}`);
     } catch (err) { setMsg(err.message); }
   }
 
@@ -98,15 +98,6 @@ export default function Atendimento() {
       setAtendimentoAtual(null);
       setMsg("Pessoa ausente - voltou para o fim da fila");
       mutarFila();
-    } catch (err) { setMsg(err.message); }
-  }
-
-  async function chamarNovamente() {
-    if (!atendimentoAtual) return;
-    setMsg("");
-    try {
-      await api.post(`/api/atendimento/rechamar/${atendimentoAtual.id}`);
-      setMsg("Chamada repetida no painel");
     } catch (err) { setMsg(err.message); }
   }
 
@@ -133,7 +124,7 @@ export default function Atendimento() {
     try {
       await api.post(`/api/atendimento/cancelar/${atendimentoAtual.id}`);
       setAtendimentoAtual(null);
-      setMsg("Atendimento cancelado, voltou para AGUARDANDO");
+      setMsg("Atendimento para fila com status CANCELADO, pode ser recepcionado novamente");
       mutarFila();
     } catch (err) { setMsg(err.message); }
   }
@@ -152,6 +143,7 @@ export default function Atendimento() {
         <select value={estacaoTipo} onChange={(e) => setEstacaoTipo(e.target.value)} disabled={!!estacaoId || emCurso}>
           <option value="MESA">Mesa</option>
           <option value="GUICHE">Guichê</option>
+          <option value="SALA">Sala</option>
         </select>
         <label style={{ marginLeft: 8 }}>Número: </label>
         <input value={estacaoNumero} onChange={(e) => setEstacaoNumero(e.target.value)} placeholder="1" style={{ width: 50 }} disabled={!!estacaoId || emCurso} />
@@ -177,7 +169,6 @@ export default function Atendimento() {
               <div style={{ marginTop: 8 }}>
                 {atendimentoAtual.status === "CHAMANDO" && (
                   <>
-                    <button onClick={chamarNovamente} style={{ marginRight: 8 }}>Chamar Novamente</button>
                     <button onClick={ausentar} style={{ marginRight: 8 }}>Ausente</button>
                     <button onClick={iniciar} style={{ marginRight: 8 }}>Iniciar Atendimento</button>
                     <button onClick={cancelar} style={{ color: "red" }}>Cancelar</button>

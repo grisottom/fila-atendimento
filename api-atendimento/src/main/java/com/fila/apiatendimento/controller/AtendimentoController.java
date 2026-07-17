@@ -44,12 +44,6 @@ public class AtendimentoController {
         return ResponseEntity.ok(ativo);
     }
 
-    @PostMapping("/rechamar/{id}")
-    public ResponseEntity<Void> rechamar(@PathVariable Integer id) {
-        atendimentoService.rechamar(id);
-        return ResponseEntity.ok().build();
-    }
-
     @PostMapping("/ausentar/{id}")
     public ResponseEntity<AtendimentoResponse> ausentar(@PathVariable Integer id) {
         return ResponseEntity.ok(atendimentoService.ausentar(id));

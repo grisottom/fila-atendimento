@@ -18,3 +18,8 @@ spring:
 
 app:
   internal-api-key: chave-interna-fila-2024
+
+logging:
+  level:
+    root: INFO
+    com.fila.apipainel.service.PainelSseService: ERROR

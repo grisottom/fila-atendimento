@@ -53,11 +53,19 @@ public class PainelSseService {
         container.setMessageListener((MessageListener) message -> {
             try {
                 String body = ((TextMessage) message).getText();
+                PainelSubscription sub = subscriptions.get(chave);
+                // ignora se já foi cleanup ou se este container pertence a uma sessão anterior
+                if (sub == null || sub.emitter() != emitter) return;
                 emitter.send(SseEmitter.event()
                         .name("painel-update")
                         .data(body));
             } catch (Exception e) {
-                log.error("Erro ao enviar SSE para {}: {}", chave, e.getMessage());
+                String msg = e.getMessage();
+                if (msg != null && (msg.toLowerCase().contains("broken pipe") || msg.contains("already completed"))) {
+                    log.warn("Cliente desconectou ({}) para {}", msg, chave);
+                } else {
+                    log.error("Erro ao enviar SSE para {}: {}", chave, msg);
+                }
                 cleanup(chave);
             }
         });
@@ -71,8 +79,11 @@ public class PainelSseService {
         emitter.onTimeout(() -> cleanup(chave));
         emitter.onError(e -> cleanup(chave));
 
-        // 4. Solicita replay dos atendimentos ativos para este painel
-        replayRequest(agenciaId, painelId);
+        // 4. Solicita replay com delay para garantir que o subscriber já está ativo no Artemis
+        new Thread(() -> {
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            replayRequest(agenciaId, painelId);
+        }).start();
 
         log.info("Painel conectado via SSE: {}", chave);
 
@@ -93,9 +104,13 @@ public class PainelSseService {
             try {
                 sub.container().stop();
                 sub.container().destroy();
-                sub.emitter().complete();
             } catch (Exception e) {
-                log.warn("Erro ao limpar subscription {}: {}", chave, e.getMessage());
+                log.warn("Erro ao limpar container {}: {}", chave, e.getMessage());
+            }
+            try {
+                sub.emitter().complete();
+            } catch (Exception ignored) {
+                // emitter já pode ter completado por conta própria
             }
             log.info("Painel desconectado: {}", chave);
         }
@@ -104,7 +119,10 @@ public class PainelSseService {
     private void replayRequest(String agenciaId, Integer painelId) {
         try {
             String json = objectMapper.writeValueAsString(Map.of("agenciaId", agenciaId, "painelId", painelId));
-            jmsTemplate.send("replay-request", session -> session.createTextMessage(json));
+            // Envia para fila (não tópico) — pubSubDomain=false garante consumo único pelo ReplayListener
+            JmsTemplate filaTemplate = new JmsTemplate(connectionFactory);
+            filaTemplate.setPubSubDomain(false);
+            filaTemplate.send("replay-request", session -> session.createTextMessage(json));
             log.info("Replay solicitado para agencia={} painel={}", agenciaId, painelId);
         } catch (Exception e) {
             log.error("Erro ao solicitar replay: {}", e.getMessage());

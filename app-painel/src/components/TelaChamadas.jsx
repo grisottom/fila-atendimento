@@ -11,22 +11,9 @@ const blinkKeyframes = `
 const API_URL = import.meta.env.VITE_API_PAINEL_URL || "";
 
 export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, username }) {
-  const storageKey = `painel-${agenciaId}-${painelNumero}`;
-
-  function carregarStorage(chave) {
-    const hoje = new Date().toDateString();
-    const salvo = JSON.parse(localStorage.getItem(chave));
-    if (salvo && salvo.data === hoje) return salvo.itens;
-    localStorage.removeItem(chave);
-    return [];
-  }
-
-  const [chamadas, setChamadas] = useState(() => carregarStorage(`${storageKey}-chamadas`));
-  const [historico, setHistorico] = useState(() => carregarStorage(`${storageKey}-historico`));
+  const [chamadas, setChamadas] = useState([]);
+  const [historico, setHistorico] = useState([]);
   const eventSourceRef = useRef(null);
-
-  useEffect(() => { localStorage.setItem(`${storageKey}-chamadas`, JSON.stringify({ data: new Date().toDateString(), itens: chamadas })); }, [chamadas]);
-  useEffect(() => { localStorage.setItem(`${storageKey}-historico`, JSON.stringify({ data: new Date().toDateString(), itens: historico })); }, [historico]);
 
   useEffect(() => {
     conectarSSE();

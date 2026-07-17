@@ -27,7 +27,7 @@ CREATE TABLE painel (
 CREATE TABLE estacao (
     id SERIAL PRIMARY KEY,
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
-    tipo_estacao VARCHAR(10) NOT NULL CHECK (tipo_estacao IN ('MESA', 'GUICHE')),
+    tipo_estacao VARCHAR(10) NOT NULL CHECK (tipo_estacao IN ('MESA', 'GUICHE', 'SALA')),
     numero_estacao INTEGER NOT NULL,
     localizacao VARCHAR(200),
     painel_id INTEGER NOT NULL REFERENCES painel(id),

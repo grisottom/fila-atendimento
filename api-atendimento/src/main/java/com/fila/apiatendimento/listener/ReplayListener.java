@@ -47,7 +47,7 @@ public class ReplayListener {
         DefaultMessageListenerContainer container = new DefaultMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
         container.setDestinationName("replay-request");
-        container.setPubSubDomain(true);
+        container.setPubSubDomain(false); // fila, não tópico — garante consumo único
         container.setSubscriptionDurable(false);
         container.setMessageListener((MessageListener) message -> {
             try {

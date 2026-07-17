@@ -90,17 +90,6 @@ public class AtendimentoService {
     }
 
     @Transactional
-    public void rechamar(@NonNull Integer atendimentoId) {
-        FilaAtendimento fila = filaRepository.findById(atendimentoId)
-                .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
-
-        Estacao estacao = estacaoRepository.findById(fila.getEstacaoId())
-                .orElseThrow(() -> new RuntimeException("Estação não encontrada"));
-
-        publicarNoPainel(estacao, fila, "CHAMANDO");
-    }
-
-    @Transactional
     public AtendimentoResponse ausentar(@NonNull Integer atendimentoId) {
         FilaAtendimento fila = filaRepository.findById(atendimentoId)
                 .orElseThrow(() -> new RuntimeException("Atendimento não encontrado"));
