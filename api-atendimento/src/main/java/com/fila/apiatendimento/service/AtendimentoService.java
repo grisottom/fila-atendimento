@@ -76,7 +76,11 @@ public class AtendimentoService {
         }
 
         FilaAtendimento proximo = filaRepository.findProximoParaAtendimento(estacao.getAgenciaId(), permissoes)
-                .orElseThrow(() -> new RuntimeException("Nenhum atendimento na fila"));
+                .orElseThrow(() -> {
+                    log.warn("Nenhum atendimento na fila: agencia={}, estacao={}, username={}, permissoes={}",
+                            estacao.getAgenciaId(), estacaoId, username, permissoes);
+                    return new RuntimeException("Nenhum atendimento na fila");
+                });
 
         proximo.setStatus("CHAMANDO");
         proximo.setEstacaoId(estacaoId);

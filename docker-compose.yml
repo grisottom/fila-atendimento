@@ -18,6 +18,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: fila-postgres
+    command: postgres -c max_connections=500
     environment:
       POSTGRES_USER: fila
       POSTGRES_PASSWORD: fila123
@@ -38,7 +39,7 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
     container_name: fila-keycloak
-    command: start-dev --import-realm
+    command: start-dev --import-realm --health-enabled=true
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -52,12 +53,18 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+      - ./infra/keycloak/realm-combined.json:/opt/keycloak/data/import/realm-export.json
       - ./infra/keycloak/themes/painel:/opt/keycloak/themes/painel
       - ./infra/keycloak/themes/atendimento:/opt/keycloak/themes/atendimento
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     networks:
       - fila-net
 
@@ -81,11 +88,10 @@ services:
     networks:
       - fila-net
 
-  # ─── APIs ───────────────────────────────────────────────
+  # ─── APIs (com réplicas para carga) ─────────────────────
 
   api-painel:
     build: ./api-painel
-    container_name: fila-api-painel
     environment:
       SPRING_ARTEMIS_BROKER_URL: tcp://artemis:61616
       SPRING_ARTEMIS_USER: artemis
@@ -96,6 +102,10 @@ services:
     depends_on:
       artemis:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    deploy:
+      replicas: 3
     labels:
       - "traefik.enable=true"
       # Rota: localhost:3000/api/* → api-painel
@@ -111,7 +121,6 @@ services:
 
   api-atendimento:
     build: ./api-atendimento
-    container_name: fila-api-atendimento
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/fila_atendimento
       SPRING_DATASOURCE_USERNAME: fila
@@ -132,6 +141,10 @@ services:
         condition: service_healthy
       artemis:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    deploy:
+      replicas: 8
     labels:
       - "traefik.enable=true"
       # Rota: localhost:3001/api/* → api-atendimento
@@ -178,12 +191,9 @@ volumes:
   postgres_data:
   artemis_data:
 
-#ipam - IP Address Management Driver
-#configuration to avoid conflict with VPN, when it is on
-#to avoid error: "could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network"
 networks:
   fila-net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.23.23.0/26
+        - subnet: 172.23.0.0/20

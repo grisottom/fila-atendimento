@@ -1,6 +1,7 @@
 {
   "realm": "fila-atendimento",
   "enabled": true,
+  "accessTokenLifespan": 3600,
   "roles": {
     "realm": [
       { "name": "admin", "description": "Gerente da agência" },

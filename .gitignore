@@ -3,3 +3,7 @@ target/
 .env
 *.class
 *.jar
+
+# Arquivos gerados para teste de carga
+infra/keycloak/realm-export-teste.json
+infra/keycloak/realm-combined.json

@@ -62,7 +62,8 @@ CREATE TABLE fila_atendimento (
     horario_chamada TIMESTAMP,
     horario_inicio_atendimento TIMESTAMP,
     horario_fim_atendimento TIMESTAMP,
-    posicao_fila INTEGER NOT NULL DEFAULT 0
+    posicao_fila INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_fila_agencia_status ON fila_atendimento(agencia_id, status);

@@ -49,6 +49,9 @@ public class FilaAtendimento {
     @Column(name = "posicao_fila")
     private Integer posicaoFila;
 
+    @Version
+    private Integer version;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getAgenciaId() { return agenciaId; }
@@ -79,4 +82,6 @@ public class FilaAtendimento {
     public void setHorarioFimAtendimento(LocalDateTime horarioFimAtendimento) { this.horarioFimAtendimento = horarioFimAtendimento; }
     public Integer getPosicaoFila() { return posicaoFila; }
     public void setPosicaoFila(Integer posicaoFila) { this.posicaoFila = posicaoFila; }
+    public Integer getVersion() { return version; }
+    public void setVersion(Integer version) { this.version = version; }
 }
