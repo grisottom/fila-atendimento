@@ -113,7 +113,8 @@ fila_atendimento
   ├── horario_chamada
   ├── horario_inicio_atendimento
   ├── horario_fim_atendimento
-  └── posicao_fila
+  ├── posicao_fila
+  └── publicado_no_broker (flag do outbox pattern)
 ```
 
 ---
@@ -124,7 +125,7 @@ fila_atendimento
 docker compose down -v && docker compose up -d --build
 ```
 
-Aguardar o Keycloak inicializar (~30s) antes de acessar as aplicações.
+O Keycloak usa H2 em memória e importa apenas os usuários essenciais (~7), resultando em startup rápido (~20-30s). Aguarde o health check antes de acessar as aplicações.
 
 | URL                          | Descrição                  |
 |------------------------------|----------------------------|
@@ -133,6 +134,34 @@ Aguardar o Keycloak inicializar (~30s) antes de acessar as aplicações.
 | http://localhost:8080        | Keycloak Admin             |
 | http://localhost:8161        | Artemis Console            |
 | http://localhost:8888        | Traefik Dashboard          |
+
+### Scripts de teste (pasta `teste/`)
+
+| Script                              | Descrição                                                        |
+|-------------------------------------|------------------------------------------------------------------|
+| `01-gerar-usuarios-keycloak.sh`     | Gera `usuarios-teste.json` com N usuários pre-hashed (padrão 1200 agências × 2) |
+| `02-importar-usuarios-keycloak.sh`  | Importa os usuários gerados no Keycloak via Admin API em paralelo |
+| `03-teste-painel-sse.sh`            | Abre conexões SSE simulando painéis e exibe eventos em tempo real com totalização |
+| `04-teste-fluxo-completo.sh`        | Executa o fluxo completo: triagem → chamada → atendimento → finalização |
+
+Fluxo para teste de carga:
+
+```bash
+# 1. Sobe o ambiente
+docker compose up -d --build
+
+# 2. Gera os usuários de teste (1200 agências, 2400 atendentes)
+./teste/01-gerar-usuarios-keycloak.sh
+
+# 3. Importa no Keycloak (paralelo, ~30s)
+./teste/02-importar-usuarios-keycloak.sh
+
+# 4. Abre painéis SSE
+./teste/03-teste-painel-sse.sh
+
+# 5. Executa fluxo completo (em outro terminal)
+./teste/04-teste-fluxo-completo.sh
+```
 
 ---
 
@@ -168,6 +197,59 @@ Com múltiplas instâncias da `api-painel` (ex: em Kubernetes), o Artemis garant
 
 ---
 
+## Outbox Pattern — Garantia de publicação na fila
+
+### Problema
+
+Quando a triagem recepciona uma pessoa, o registro é salvo no banco e uma mensagem precisa ser publicada na fila JMS para que atendentes possam consumir. Se o banco commita mas o broker falha (rede, broker reiniciando), o registro fica "AGUARDANDO" sem mensagem correspondente — nunca será chamado.
+
+O cenário inverso também existe: no `chamarProximo`, a mensagem é consumida da fila via `receiveSelected`. Se depois o banco falhar (rollback), a mensagem já foi removida do broker e o registro fica preso.
+
+### Solução
+
+O `OutboxPublisher` implementa um outbox pattern leve usando uma coluna `publicado_no_broker` na própria tabela `fila_atendimento`:
+
+```
+  TriagemService                  Banco                    OutboxPublisher (5s)
+       │                           │                              │
+       │  save(fila)               │                              │
+       │  publicadoNoBroker=false  │                              │
+       │ ─────────────────────────►│                              │
+       │                           │                              │
+       │                           │   SELECT ... WHERE           │
+       │                           │   publicado_no_broker=false  │
+       │                           │   AND status='AGUARDANDO'    │
+       │                           │◄─────────────────────────────│
+       │                           │                              │
+       │                           │                   publica na │
+       │                           │                   fila JMS   │
+       │                           │                              │──► Artemis
+       │                           │                              │
+       │                           │   UPDATE                     │
+       │                           │   publicado_no_broker=true   │
+       │                           │◄─────────────────────────────│
+```
+
+Para o cenário do `chamarProximo` (mensagem consumida + rollback no banco), o `AtendimentoService` chama `outboxPublisher.resetarPublicacao(filaId)` no bloco `catch`. Esse método usa `@Transactional(propagation = REQUIRES_NEW)`, garantindo que o reset commita independente do rollback da transação externa. Na próxima execução do scheduler (até 5s), a mensagem é republicada.
+
+### Idempotência
+
+Como o outbox pode republicar mensagens que já existem na fila do broker, o `chamarProximo` tem uma verificação de idempotência: se o registro já não está "AGUARDANDO" quando consumido, descarta a mensagem duplicada e tenta o próximo.
+
+### Performance
+
+Um partial index garante que o scheduler não faça full table scan:
+
+```sql
+CREATE INDEX idx_fila_outbox_pendente
+    ON fila_atendimento(id)
+    WHERE status = 'AGUARDANDO' AND publicado_no_broker = FALSE;
+```
+
+O índice se mantém pequeno porque registros pendentes são uma fração mínima da tabela a qualquer momento.
+
+---
+
 ## Funcionamento da Fila
 
 ### Ciclo completo de um atendimento
@@ -191,12 +273,12 @@ Com múltiplas instâncias da `api-painel` (ex: em Kubernetes), o Artemis garant
 ┌─────────────┐   POST /api/atendimento/chamar   ┌──────────────────┐
 │  Atendente  │ ──────────────────────────────►  │  api-atendimento │
 │  (tela de   │                                  │                  │
-│ atendimento)│  ◄── AtendimentoResponse         │  1. busca próximo│
-└─────────────┘                                  │     da fila*     │
+│ atendimento)│  ◄── AtendimentoResponse         │  1. consome da   │
+└─────────────┘                                  │     fila JMS*    │
                                                  │  2. status →     │
                                                  │     CHAMANDO     │
                                                  │  3. publica no   │
-                                                 │     Artemis      │
+                                                 │     tópico       │
                                                  └────────┬─────────┘
                                                           │
                               tópico: agencia.<id>.painel.<n>
@@ -216,7 +298,7 @@ Com múltiplas instâncias da `api-painel` (ex: em Kubernetes), o Artemis garant
                                                  └────────────────┘
 ```
 
-*A seleção do próximo respeita as permissões do atendente: só seleciona atendimentos cujo `servico.permissao_exigida` está entre as roles do atendente.
+*A seleção do próximo é feita via `receiveSelected` na fila JMS (`agencia.<id>.fila`) com selector de permissões. O broker entrega apenas mensagens cujo `servico.permissao_exigida` está entre as roles do atendente. A mensagem contém o `filaAtendimentoId`, que é então consultado no banco para atualizar o status.
 
 ### Transições de status
 
@@ -308,15 +390,20 @@ O delay de 500ms é necessário porque a subscription JMS no Artemis é criada d
 
 ### Prioridade da fila
 
-```
-  fila_atendimento (status = AGUARDANDO, agencia_id = X, servico compatível)
-  │
-  ├── com horario_agendado  ──► ordenado por horario_agendado ASC
-  │
-  └── sem horario_agendado  ──► ordenado por posicao_fila ASC (ordem de chegada)
-       (espontâneo)
+A prioridade é gerenciada pelo broker JMS via propriedade `JMSPriority` da mensagem:
 
-  Agendados sempre têm prioridade sobre espontâneos.
-  Entre agendados: quem tem horário mais cedo é chamado primeiro.
-  Entre espontâneos: quem chegou primeiro (menor posicao_fila) é chamado primeiro.
 ```
+  fila JMS: agencia.<id>.fila
+  │
+  ├── prioridade 9 (agendados)  ──► consumidos primeiro pelo receiveSelected
+  │
+  └── prioridade 4 (espontâneos) ──► consumidos após os agendados
+```
+
+O selector JMS filtra por permissão do atendente:
+```
+permissao IN ('basica', 'normal', 'especial')
+```
+
+Agendados sempre têm prioridade sobre espontâneos (prioridade JMS mais alta).
+Dentro da mesma prioridade, o broker entrega na ordem de chegada (FIFO).
