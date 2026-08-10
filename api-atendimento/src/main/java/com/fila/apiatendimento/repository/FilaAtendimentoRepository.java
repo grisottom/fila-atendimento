@@ -41,4 +41,6 @@ public interface FilaAtendimentoRepository extends JpaRepository<FilaAtendimento
     List<FilaAtendimento> findFilaDisponivel(
         @Param("agenciaId") String agenciaId,
         @Param("permissoes") List<String> permissoes);
+
+    List<FilaAtendimento> findByPublicadoNoBrokerFalseAndStatus(String status);
 }

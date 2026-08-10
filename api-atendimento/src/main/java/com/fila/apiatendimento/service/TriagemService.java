@@ -10,8 +10,14 @@ import com.fila.apiatendimento.entity.Pessoa;
 import com.fila.apiatendimento.repository.AgendamentoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.PessoaRepository;
+import jakarta.jms.DeliveryMode;
+import jakarta.jms.Message;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,18 +30,22 @@ import java.util.concurrent.ThreadLocalRandom;
 @Service
 public class TriagemService {
 
+    private static final Logger log = LoggerFactory.getLogger(TriagemService.class);
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     private final PessoaRepository pessoaRepository;
     private final AgendamentoRepository agendamentoRepository;
     private final FilaAtendimentoRepository filaRepository;
+    private final JmsTemplate jmsQueueTemplate;
 
     public TriagemService(PessoaRepository pessoaRepository,
                           AgendamentoRepository agendamentoRepository,
-                          FilaAtendimentoRepository filaRepository) {
+                          FilaAtendimentoRepository filaRepository,
+                          @Qualifier("jmsQueueTemplate") JmsTemplate jmsQueueTemplate) {
         this.pessoaRepository = pessoaRepository;
         this.agendamentoRepository = agendamentoRepository;
         this.filaRepository = filaRepository;
+        this.jmsQueueTemplate = jmsQueueTemplate;
     }
 
     @Transactional
@@ -80,6 +90,24 @@ public class TriagemService {
                 agendamento != null ? agendamento.getDataHora() : null);
     }
 
+    void publicarNaQueueAgencia(String agenciaId, Integer filaAtendimentoId,
+                                            String permissao, boolean agendado) {
+        String queueAgencia = "agencia." + agenciaId + ".fila";
+        int prioridade = agendado ? 9 : 4;
+
+        jmsQueueTemplate.send(queueAgencia, session -> {
+            Message message = session.createTextMessage(String.valueOf(filaAtendimentoId));
+            message.setIntProperty("filaAtendimentoId", filaAtendimentoId);
+            message.setStringProperty("permissao", permissao);
+            message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);
+            message.setJMSPriority(prioridade);
+            return message;
+        });
+
+        log.info("Publicado na fila {}: filaAtendimentoId={}, permissao={}, prioridade={}",
+                queueAgencia, filaAtendimentoId, permissao, prioridade);
+    }
+
     private String gerarSenha() {
         StringBuilder sb = new StringBuilder(5);
         for (int i = 0; i < 5; i++) {
@@ -115,7 +143,9 @@ public class TriagemService {
                 .orElseThrow(() -> new IllegalArgumentException("Atendimento não encontrado: " + id));
         fila.setServicoId(servicoId);
         fila.setStatus("AGUARDANDO");
+        fila.setPublicadoNoBroker(false);
         filaRepository.save(fila);
+
         return new TriagemResponse(fila.getSenha(), fila.getNomePessoa(), servicoId, fila.getHorarioAgendado());
     }
 }

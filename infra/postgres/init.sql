@@ -63,11 +63,13 @@ CREATE TABLE fila_atendimento (
     horario_inicio_atendimento TIMESTAMP,
     horario_fim_atendimento TIMESTAMP,
     posicao_fila INTEGER NOT NULL DEFAULT 0,
+    publicado_no_broker BOOLEAN NOT NULL DEFAULT FALSE,
     version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_fila_agencia_status ON fila_atendimento(agencia_id, status);
 CREATE INDEX idx_fila_prioridade ON fila_atendimento(agencia_id, status, horario_agendado NULLS LAST, posicao_fila);
+CREATE INDEX idx_fila_outbox_pendente ON fila_atendimento(id) WHERE status = 'AGUARDANDO' AND publicado_no_broker = FALSE;
 
 -- ===========================================
 -- DADOS INICIAIS

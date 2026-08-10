@@ -43,22 +43,15 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/fila_atendimento
-      KC_DB_USERNAME: fila
-      KC_DB_PASSWORD: fila123
-      KC_DB_SCHEMA: keycloak
       KC_HOSTNAME_URL: http://localhost:8080
       KC_HOSTNAME_ADMIN_URL: http://localhost:8080
+      JAVA_OPTS_KC_HEAP: "-Xms512m -Xmx1024m"
     ports:
       - "8080:8080"
     volumes:
-      - ./infra/keycloak/realm-combined.json:/opt/keycloak/data/import/realm-export.json
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
       - ./infra/keycloak/themes/painel:/opt/keycloak/themes/painel
       - ./infra/keycloak/themes/atendimento:/opt/keycloak/themes/atendimento
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 10s
@@ -105,7 +98,8 @@ services:
       keycloak:
         condition: service_healthy
     deploy:
-      replicas: 3
+      # replicas: 3
+      replicas: 1      
     labels:
       - "traefik.enable=true"
       # Rota: localhost:3000/api/* → api-painel
@@ -144,7 +138,8 @@ services:
       keycloak:
         condition: service_healthy
     deploy:
-      replicas: 8
+      # replicas: 8
+      replicas: 1
     labels:
       - "traefik.enable=true"
       # Rota: localhost:3001/api/* → api-atendimento

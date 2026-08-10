@@ -6,11 +6,11 @@
 set -e
 
 # ─── CONFIGURAÇÃO ─────────────────────────────────────────
-NUM_AGENCIAS=1200
+NUM_AGENCIAS=120
 NUM_PAINEIS_POR_AGENCIA=1
 NUM_AGENDAMENTOS=2         # por agência (simula janela de 5 min: ~2400 total)
 NUM_ATENDENTES_POR_AGENCIA=2
-MAX_PARALELO=200           # máximo de agências processando simultaneamente
+MAX_PARALELO=40           # máximo de agências processando simultaneamente
 BASE_URL="http://localhost:3001"
 KEYCLOAK_URL="http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/token"
 CLIENT_ID="fila-atendimento"

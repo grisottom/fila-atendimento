@@ -49,6 +49,9 @@ public class FilaAtendimento {
     @Column(name = "posicao_fila")
     private Integer posicaoFila;
 
+    @Column(name = "publicado_no_broker", nullable = false)
+    private boolean publicadoNoBroker = false;
+
     @Version
     private Integer version;
 
@@ -82,6 +85,8 @@ public class FilaAtendimento {
     public void setHorarioFimAtendimento(LocalDateTime horarioFimAtendimento) { this.horarioFimAtendimento = horarioFimAtendimento; }
     public Integer getPosicaoFila() { return posicaoFila; }
     public void setPosicaoFila(Integer posicaoFila) { this.posicaoFila = posicaoFila; }
+    public boolean isPublicadoNoBroker() { return publicadoNoBroker; }
+    public void setPublicadoNoBroker(boolean publicadoNoBroker) { this.publicadoNoBroker = publicadoNoBroker; }
     public Integer getVersion() { return version; }
     public void setVersion(Integer version) { this.version = version; }
 }
