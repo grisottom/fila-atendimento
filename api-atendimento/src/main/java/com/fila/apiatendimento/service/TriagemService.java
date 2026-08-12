@@ -10,6 +10,7 @@ import com.fila.apiatendimento.entity.Pessoa;
 import com.fila.apiatendimento.repository.AgendamentoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.PessoaRepository;
+import com.fila.apiatendimento.repository.ServicoRepository;
 import jakarta.jms.DeliveryMode;
 import jakarta.jms.Message;
 import org.slf4j.Logger;
@@ -33,18 +34,24 @@ public class TriagemService {
     private static final Logger log = LoggerFactory.getLogger(TriagemService.class);
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
+    // FAULT INJECTION: contador para falhar nos 3 primeiros itens
+    // private static final java.util.concurrent.atomic.AtomicInteger faultCountTriagem = new java.util.concurrent.atomic.AtomicInteger(0);
+
     private final PessoaRepository pessoaRepository;
     private final AgendamentoRepository agendamentoRepository;
     private final FilaAtendimentoRepository filaRepository;
+    private final ServicoRepository servicoRepository;
     private final JmsTemplate jmsQueueTemplate;
 
     public TriagemService(PessoaRepository pessoaRepository,
                           AgendamentoRepository agendamentoRepository,
                           FilaAtendimentoRepository filaRepository,
+                          ServicoRepository servicoRepository,
                           @Qualifier("jmsQueueTemplate") JmsTemplate jmsQueueTemplate) {
         this.pessoaRepository = pessoaRepository;
         this.agendamentoRepository = agendamentoRepository;
         this.filaRepository = filaRepository;
+        this.servicoRepository = servicoRepository;
         this.jmsQueueTemplate = jmsQueueTemplate;
     }
 
@@ -53,7 +60,7 @@ public class TriagemService {
         Long cpf = Objects.requireNonNull(request.cpf(), "CPF não pode ser nulo");
 
         String nomePessoa = pessoaRepository.findById(cpf)
-                .map(Pessoa::getNome)
+                .map(p -> p.getNome())
                 .orElse(request.nomePessoa());
 
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
@@ -79,8 +86,29 @@ public class TriagemService {
         fila.setHorarioChegada(LocalDateTime.now());
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(posicao);
-
+        fila.setPublicadoNoBroker(true);
         filaRepository.save(fila);
+
+        // Publica na fila do broker (best effort; outbox republica se falhar)
+        try {
+            String servicoId = request.servicoId();
+            String permissao = servicoId != null
+                    ? servicoRepository.findById(servicoId).map(s -> s.getPermissaoExigida()).orElse("basica")
+                    : "basica";
+
+            // FAULT INJECTION: simula falha ao publicar no broker no 1º item
+            // if (faultCountTriagem.incrementAndGet() <= 1) {
+            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para filaId={}", faultCountTriagem.get(), fila.getId());
+            //     throw new RuntimeException("[FAULT] Falha ao publicar no broker");
+            // } else {
+            //     publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
+            // }
+            publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
+        } catch (Exception e) {
+            log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
+            fila.setPublicadoNoBroker(false);
+            filaRepository.save(fila);
+        }
 
         if (agendamento != null) {
             agendamentoRepository.delete(agendamento);

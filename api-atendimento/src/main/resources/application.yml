@@ -30,3 +30,8 @@ app:
     realm: fila-atendimento
     admin-user: admin
     admin-password: admin
+
+logging:
+  level:
+    root: WARN
+    com.fila.apiatendimento: WARN

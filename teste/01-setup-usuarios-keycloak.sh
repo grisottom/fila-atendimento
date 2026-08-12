@@ -1,0 +1,185 @@
+#!/bin/bash
+# setup-usuarios-keycloak.sh
+# Gera e importa atendentes de teste no Keycloak via Admin REST API.
+# Idempotente: pode rodar múltiplas vezes sem duplicar usuários.
+#
+# Uso: ./teste/01-setup-usuarios-keycloak.sh [NUM_AGENCIAS] [PARALLELISM]
+
+set -e
+
+# Garante execução relativa à raiz do projeto
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
+source "$SCRIPT_DIR/config.sh"
+
+NUM_AGENCIAS=${1:-$NUM_AGENCIAS}
+PARALLELISM=${2:-10}
+OUTPUT="$LOG_DIR/usuarios-teste.json"
+mkdir -p "$LOG_DIR"
+
+KEYCLOAK_BASE_URL="http://localhost:8080"
+REALM="fila-atendimento"
+ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
+ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
+
+TOTAL=$((NUM_AGENCIAS * NUM_ATENDENTES_POR_AGENCIA))
+
+echo "╔══════════════════════════════════════════╗"
+echo "║  Setup Usuários Keycloak (idempotente)  ║"
+echo "╠══════════════════════════════════════════╣"
+printf "║  Agências:    %-6d                   ║\n" "$NUM_AGENCIAS"
+printf "║  Atendentes:  %-6d (%d/agência)      ║\n" "$TOTAL" "$NUM_ATENDENTES_POR_AGENCIA"
+printf "║  Paralelismo: %-6d                   ║\n" "$PARALLELISM"
+echo "╚══════════════════════════════════════════╝"
+echo ""
+
+# ─── FASE 1: GERAR JSON ──────────────────────────────────
+echo "[1/2] Gerando JSON com $TOTAL usuários (hashIterations=1000 para dev)..."
+
+read HASH_VALUE HASH_SALT <<< $(python3 -c "
+import hashlib, base64, os
+salt = os.urandom(16)
+dk = hashlib.pbkdf2_hmac('sha256', b'pwd', salt, 1000, dklen=32)
+print(base64.b64encode(dk).decode(), base64.b64encode(salt).decode())
+")
+
+SECRET_DATA="{\\\"value\\\":\\\"$HASH_VALUE\\\",\\\"salt\\\":\\\"$HASH_SALT\\\"}"
+CREDENTIAL_DATA="{\\\"hashIterations\\\":1000,\\\"algorithm\\\":\\\"pbkdf2-sha256\\\"}"
+
+echo "[" > "$OUTPUT"
+
+PRIMEIRO=1
+for a in $(seq 1 $NUM_AGENCIAS); do
+  AGENCIA_ID=$(printf "agencia-%04d" "$a")
+  for n in $(seq 1 $NUM_ATENDENTES_POR_AGENCIA); do
+    USERNAME="atend-${AGENCIA_ID}-${n}"
+
+    if [ $PRIMEIRO -eq 1 ]; then
+      PRIMEIRO=0
+    else
+      echo "," >> "$OUTPUT"
+    fi
+
+    cat >> "$OUTPUT" << EOF
+  {
+    "username": "$USERNAME",
+    "enabled": true,
+    "firstName": "Atendente $n",
+    "lastName": "$AGENCIA_ID",
+    "email": "${USERNAME}@teste.local",
+    "emailVerified": true,
+    "credentials": [{
+      "type": "password",
+      "secretData": "$SECRET_DATA",
+      "credentialData": "$CREDENTIAL_DATA"
+    }],
+    "attributes": {"agencia": ["$AGENCIA_ID"]},
+    "realmRoles": ["basica", "normal", "especial"]
+  }
+EOF
+  done
+
+  if [ $((a % 100)) -eq 0 ]; then
+    printf "\r       Progresso: %d/%d agências" "$a" "$NUM_AGENCIAS"
+  fi
+done
+
+echo "" >> "$OUTPUT"
+echo "]" >> "$OUTPUT"
+echo ""
+
+TAMANHO=$(du -h "$OUTPUT" | cut -f1)
+echo "       JSON gerado: $OUTPUT ($TAMANHO)"
+echo ""
+
+# ─── FASE 2: IMPORTAR NO KEYCLOAK ────────────────────────
+echo "[2/2] Importando no Keycloak ($KEYCLOAK_BASE_URL)..."
+
+# Obtém token de admin
+TOKEN=$(curl -s -X POST "$KEYCLOAK_BASE_URL/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=$ADMIN_USER" \
+  -d "password=$ADMIN_PASS" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" | jq -r '.access_token')
+
+if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+  echo "Erro: não foi possível obter token de admin. Keycloak rodando?"
+  exit 1
+fi
+
+# Busca roles para atribuição
+ROLES_JSON=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/roles" \
+  -H "Authorization: Bearer $TOKEN")
+ROLE_MAPPINGS=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "basica" or .name == "normal" or .name == "especial")]')
+
+echo "       Roles: $(echo "$ROLE_MAPPINGS" | jq length) encontradas"
+
+# Controle de progresso
+PROGRESS_DIR=$(mktemp -d)
+trap "rm -rf $PROGRESS_DIR" EXIT
+
+create_user() {
+  local idx=$1
+  local user_json=$2
+  local username=$(echo "$user_json" | jq -r '.username')
+
+  local payload=$(echo "$user_json" | jq '{
+    username, enabled, firstName, lastName, email, emailVerified, attributes, credentials
+  }')
+
+  local http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$payload")
+
+  if [ "$http_code" = "201" ]; then
+    local user_id=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users?username=$username&exact=true" \
+      -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+    if [ "$user_id" != "null" ] && [ -n "$user_id" ]; then
+      curl -s -o /dev/null -X POST \
+        "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/$user_id/role-mappings/realm" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$ROLE_MAPPINGS"
+    fi
+    touch "$PROGRESS_DIR/ok_$idx"
+  elif [ "$http_code" = "409" ]; then
+    touch "$PROGRESS_DIR/skip_$idx"
+  else
+    echo "$username:$http_code" >> "$PROGRESS_DIR/errors.log"
+  fi
+}
+
+export -f create_user
+export KEYCLOAK_BASE_URL REALM TOKEN ROLE_MAPPINGS PROGRESS_DIR
+
+seq 0 $((TOTAL - 1)) | xargs -P "$PARALLELISM" -I {} bash -c '
+  user_json=$(jq -c ".[{}]" "'"$OUTPUT"'")
+  create_user "{}" "$user_json"
+' _
+
+# Relatório
+OK_COUNT=$(ls "$PROGRESS_DIR"/ok_* 2>/dev/null | wc -l)
+SKIP_COUNT=$(ls "$PROGRESS_DIR"/skip_* 2>/dev/null | wc -l)
+ERROR_COUNT=0
+if [ -f "$PROGRESS_DIR/errors.log" ]; then
+  ERROR_COUNT=$(wc -l < "$PROGRESS_DIR/errors.log")
+fi
+
+echo ""
+echo "       Criados:      $OK_COUNT"
+echo "       Já existiam:  $SKIP_COUNT"
+echo "       Erros:        $ERROR_COUNT"
+
+if [ "$ERROR_COUNT" -gt 0 ]; then
+  echo ""
+  echo "       Primeiros erros:"
+  head -5 "$PROGRESS_DIR/errors.log" | sed 's/^/         /'
+fi
+
+echo ""
+echo "Setup concluído."

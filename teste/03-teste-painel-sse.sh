@@ -3,10 +3,10 @@
 # Simula conexões SSE para múltiplas agências e painéis sem usar navegador.
 # Eventos são exibidos em TEMPO REAL no terminal conforme chegam.
 
-NUM_AGENCIAS=120
-NUM_PAINEIS_POR_AGENCIA=1
-BASE_URL="http://localhost:3000"
-KEYCLOAK_URL="http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/token"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+
+BASE_URL="$BASE_URL_PAINEL"
 CLIENT_ID="fila-painel"
 USERNAME="ger"
 PASSWORD="pwd"

@@ -6,13 +6,11 @@
 set -e
 
 # ─── CONFIGURAÇÃO ─────────────────────────────────────────
-NUM_AGENCIAS=120
-NUM_PAINEIS_POR_AGENCIA=1
-NUM_AGENDAMENTOS=2         # por agência (simula janela de 5 min: ~2400 total)
-NUM_ATENDENTES_POR_AGENCIA=2
-MAX_PARALELO=40           # máximo de agências processando simultaneamente
-BASE_URL="http://localhost:3001"
-KEYCLOAK_URL="http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/token"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+
+MAX_PARALELO=${MAX_PARALELO:-40}  # do config.sh
+BASE_URL="$BASE_URL_ATENDIMENTO"
 CLIENT_ID="fila-atendimento"
 
 # Usuários
@@ -101,12 +99,12 @@ processar_agencia() {
 
   local TRIAGEM_SUCESSO=0 TRIAGEM_FALHA=0
   local ATEND_SUCESSO=0 ATEND_FALHA=0
-  local OFFSET=$(( (a - 1) * NUM_AGENDAMENTOS ))
+  local OFFSET=$(( (a - 1) * NUM_AGENDAMENTOS_AGENCIA ))
   local IDS_FILE="$LOG_DIR/${AGENCIA_ID}-all-ids.tmp"
   > "$IDS_FILE"
 
   # ─── FLUXO INTERCALADO: triagem → atendimento (1 a 1) ───
-  for i in $(seq 1 $NUM_AGENDAMENTOS); do
+  for i in $(seq 1 $NUM_AGENDAMENTOS_AGENCIA); do
     # 1. Triagem: recepciona 1 pessoa
     local CPF
     CPF=$(gerar_cpf $((OFFSET + i)))
@@ -184,12 +182,12 @@ processar_agencia() {
     sleep "$DELAY"
   done
 
-  echo -e "${cor_verde}[$AGENCIA_ID]${cor_reset} Triagem: $TRIAGEM_SUCESSO | Atendimento: $ATEND_SUCESSO/$NUM_AGENDAMENTOS"
+  echo -e "${cor_verde}[$AGENCIA_ID]${cor_reset} Triagem: $TRIAGEM_SUCESSO | Atendimento: $ATEND_SUCESSO/$NUM_AGENDAMENTOS_AGENCIA"
 
   # Detecta duplicatas
   local TOTAL_IDS=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
   local UNIQUE_IDS=$(sort -u "$IDS_FILE" 2>/dev/null | wc -l || echo 0)
-  local ESPERADO=$NUM_AGENDAMENTOS
+  local ESPERADO=$NUM_AGENDAMENTOS_AGENCIA
 
   if [ "$ATEND_SUCESSO" -ne "$ESPERADO" ] || [ "$TOTAL_IDS" -gt "$UNIQUE_IDS" ]; then
     local MSG="[$AGENCIA_ID] ESPERADO=$ESPERADO FINALIZADOS=$ATEND_SUCESSO IDS=$TOTAL_IDS UNICOS=$UNIQUE_IDS"
@@ -216,7 +214,7 @@ processar_agencia() {
 # ─── INÍCIO ───────────────────────────────────────────────
 
 TOTAL_PAINEIS=$((NUM_AGENCIAS * NUM_PAINEIS_POR_AGENCIA))
-TOTAL_ATENDIMENTOS=$((NUM_AGENCIAS * NUM_AGENDAMENTOS))
+TOTAL_ATENDIMENTOS=$((NUM_AGENCIAS * NUM_AGENDAMENTOS_AGENCIA))
 TOTAL_ATENDENTES=$((NUM_AGENCIAS * NUM_ATENDENTES_POR_AGENCIA))
 
 echo ""
@@ -227,7 +225,7 @@ echo "╠═══════════════════════�
 printf "║  Agências:        %-6d                                   ║\n" "$NUM_AGENCIAS"
 printf "║  Painéis:         %-6d                                   ║\n" "$TOTAL_PAINEIS"
 printf "║  Atendentes:      %-6d (%d por agência)                  ║\n" "$TOTAL_ATENDENTES" "$NUM_ATENDENTES_POR_AGENCIA"
-printf "║  Atendimentos:    %-6d (%d por agência)                  ║\n" "$TOTAL_ATENDIMENTOS" "$NUM_AGENDAMENTOS"
+printf "║  Atendimentos:    %-6d (%d por agência)                  ║\n" "$TOTAL_ATENDIMENTOS" "$NUM_AGENDAMENTOS_AGENCIA"
 printf "║  Concorrência:    %-6d agências simultâneas              ║\n" "$MAX_PARALELO"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
@@ -315,14 +313,20 @@ token_valido() {
   [ $((EXP - 300)) -gt $AGORA ]
 }
 
-# Verifica se tokens existentes ainda são válidos
+# Verifica se tokens existentes ainda são válidos e aceitos pela API
 REUSAR_TOKENS=false
 if [ -f "$TOKENS_DIR/agencia-0001.tokens" ] && [ -f "$TOKENS_DIR/triagem.token" ]; then
   PRIMEIRO_TOKEN=$(head -1 "$TOKENS_DIR/agencia-0001.tokens" 2>/dev/null)
   if token_valido "$PRIMEIRO_TOKEN"; then
-    TOKEN_TRIAGEM=$(cat "$TOKENS_DIR/triagem.token")
-    if token_valido "$TOKEN_TRIAGEM"; then
-      REUSAR_TOKENS=true
+    # Testa contra a API para garantir que a chave do Keycloak não mudou
+    HTTP_TEST=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: Bearer $PRIMEIRO_TOKEN" \
+      "$BASE_URL/api/atendimento/ativo")
+    if [ "$HTTP_TEST" != "401" ]; then
+      TOKEN_TRIAGEM=$(cat "$TOKENS_DIR/triagem.token")
+      if token_valido "$TOKEN_TRIAGEM"; then
+        REUSAR_TOKENS=true
+      fi
     fi
   fi
 fi
@@ -391,7 +395,7 @@ echo ""
 
 INICIO=$(date +%s)
 
-export NUM_AGENDAMENTOS NUM_PAINEIS_POR_AGENCIA NUM_ATENDENTES_POR_AGENCIA
+export NUM_AGENDAMENTOS_AGENCIA NUM_PAINEIS_POR_AGENCIA NUM_ATENDENTES_POR_AGENCIA
 export BASE_URL DELAY LOG_DIR ERROS_FILE
 export -f processar_agencia gerar_cpf
 

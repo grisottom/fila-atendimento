@@ -28,6 +28,9 @@ public class AtendimentoService {
 
     private static final Logger log = LoggerFactory.getLogger(AtendimentoService.class);
 
+    // FAULT INJECTION: contador para falhar nos 3 primeiros itens consumidos
+    // private static final java.util.concurrent.atomic.AtomicInteger faultCountAtendimento = new java.util.concurrent.atomic.AtomicInteger(0);
+
     private final FilaAtendimentoRepository filaAtendimentoRepository;
     private final EstacaoRepository estacaoRepository;
     private final ServicoRepository servicoRepository;
@@ -117,6 +120,13 @@ public class AtendimentoService {
             proximo.setEstacaoId(estacaoId);
             proximo.setAtendenteUsername(username);
             proximo.setHorarioChamada(LocalDateTime.now());
+
+            // FAULT INJECTION: simula erro nos 3 primeiros itens consumidos
+            // if (faultCountAtendimento.incrementAndGet() <= 1) {
+            //     log.warn("[FAULT] Simulando erro de transação no atendimento (item #{}) para filaId={}", faultCountAtendimento.get(), filaId);
+            //     throw new RuntimeException("[FAULT] Erro simulado de transação no banco (consumo)");
+            // }
+
             filaAtendimentoRepository.save(proximo);
 
             publicarNoTopicoAgenciaPainel(estacao, proximo, "CHAMANDO");
@@ -125,6 +135,7 @@ public class AtendimentoService {
 
         } catch (Exception e) {
             // Mensagem já consumida do broker; reseta flag para o outbox republicar
+            log.warn("Erro no chamarProximo para filaId={}: {}. Resetando publicação.", filaId, e.getMessage());
             if (filaId != null) {
                 outboxPublisher.resetarPublicacao(filaId);
             }
