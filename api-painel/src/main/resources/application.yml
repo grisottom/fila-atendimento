@@ -21,5 +21,7 @@ app:
 
 logging:
   level:
-    root: INFO
+    root: WARN
     com.fila.apipainel.service.PainelSseService: ERROR
+    org.apache.catalina.connector.CoyoteOutputStream: OFF
+    org.apache.coyote.http11.Http11Processor: OFF
