@@ -19,8 +19,14 @@ function getEstacaoNumeroKey() {
   return `atend_estacao_numero_${keycloak.tokenParsed?.preferred_username}`;
 }
 
+function getAgenciaDoToken() {
+  const ag = keycloak.tokenParsed?.agencia;
+  if (Array.isArray(ag)) return ag[0] || "";
+  return ag || "";
+}
+
 export default function Atendimento() {
-  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getAgenciaKey()) || "");
+  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getAgenciaKey()) || getAgenciaDoToken());
   const [estacaoId, setEstacaoId] = useState("");
   const [estacaoTipo, setEstacaoTipo] = useState(localStorage.getItem(getEstacaoTipoKey()) || "MESA");
   const [estacaoNumero, setEstacaoNumero] = useState(localStorage.getItem(getEstacaoNumeroKey()) || "");
@@ -45,6 +51,7 @@ export default function Atendimento() {
   useEffect(() => {
     if (agenciaId) {
       localStorage.setItem(getAgenciaKey(), agenciaId);
+      carregarServicos();
     }
   }, [agenciaId]);
 
@@ -57,7 +64,8 @@ export default function Atendimento() {
 
   async function carregarServicos() {
     try {
-      const res = await api.get("/api/atendimento/meus-servicos");
+      if (!agenciaId) return;
+      const res = await api.get(`/api/atendimento/meus-servicos?agenciaId=${agenciaId}`);
       setServicos(res || []);
     } catch (err) { /* ignora */ }
   }
@@ -136,7 +144,7 @@ export default function Atendimento() {
       <h2>Atendimento</h2>
       <div>
         <label>Agência: </label>
-        <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" disabled={!!estacaoId || emCurso} />
+        <input value={agenciaId} readOnly placeholder="agencia-01" style={{ background: "#f0f0f0" }} />
       </div>
       <div style={{ marginTop: 8 }}>
         <label>Tipo: </label>

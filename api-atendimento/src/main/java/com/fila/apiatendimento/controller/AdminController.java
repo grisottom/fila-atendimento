@@ -5,12 +5,11 @@ import com.fila.apiatendimento.dto.EstacaoRequest;
 import com.fila.apiatendimento.dto.PainelRequest;
 import com.fila.apiatendimento.entity.*;
 import com.fila.apiatendimento.repository.*;
-import com.fila.apiatendimento.service.KeycloakAdminService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -20,18 +19,21 @@ public class AdminController {
     private final PainelRepository painelRepository;
     private final EstacaoRepository estacaoRepository;
     private final ServicoRepository servicoRepository;
-    private final KeycloakAdminService keycloakAdminService;
+    private final AtendenteRepository atendenteRepository;
+    private final PainelServicoRepository painelServicoRepository;
 
     public AdminController(AgenciaRepository agenciaRepository,
                            PainelRepository painelRepository,
                            EstacaoRepository estacaoRepository,
                            ServicoRepository servicoRepository,
-                           KeycloakAdminService keycloakAdminService) {
+                           AtendenteRepository atendenteRepository,
+                           PainelServicoRepository painelServicoRepository) {
         this.agenciaRepository = agenciaRepository;
         this.painelRepository = painelRepository;
         this.estacaoRepository = estacaoRepository;
         this.servicoRepository = servicoRepository;
-        this.keycloakAdminService = keycloakAdminService;
+        this.atendenteRepository = atendenteRepository;
+        this.painelServicoRepository = painelServicoRepository;
     }
 
     @PostMapping("/agencia")
@@ -69,17 +71,11 @@ public class AdminController {
 
     @PostMapping("/estacao")
     public ResponseEntity<Estacao> criarEstacao(@RequestBody EstacaoRequest req) {
-        Painel painel = painelRepository.findById(req.painelId())
-                .orElse(null);
-        if (painel == null) {
-            return ResponseEntity.badRequest().build();
-        }
         Estacao e = new Estacao();
         e.setAgenciaId(req.agenciaId());
         e.setTipoEstacao(req.tipoEstacao());
         e.setNumeroEstacao(req.numeroEstacao());
         e.setLocalizacao(req.localizacao());
-        e.setPainel(painel);
         return ResponseEntity.ok(estacaoRepository.save(e));
     }
 
@@ -96,11 +92,112 @@ public class AdminController {
 
     @GetMapping("/atendentes/{agenciaId}")
     public ResponseEntity<List<Map<String, Object>>> listarAtendentes(@PathVariable String agenciaId) {
-        return ResponseEntity.ok(keycloakAdminService.listarAtendentes(agenciaId));
+        List<Atendente> todos = atendenteRepository.findByAgenciaId(agenciaId);
+        List<Map<String, Object>> resultado = todos.stream()
+                .map(a -> {
+                    List<String> perms = a.getPermissoes().stream()
+                            .map(PermissaoAtendente::getPermissao)
+                            .toList();
+                    return Map.<String, Object>of("username", a.getUsername(), "roles", perms);
+                })
+                .toList();
+        return ResponseEntity.ok(resultado);
+    }
+
+    @PostMapping("/atendentes/{agenciaId}")
+    @Transactional
+    public ResponseEntity<Void> salvarPermissoes(
+            @PathVariable String agenciaId,
+            @RequestBody Map<String, List<String>> body) {
+        String username = body.get("username") != null && !body.get("username").isEmpty()
+                ? body.get("username").get(0) : null;
+        List<String> permissoes = body.get("permissoes");
+        if (username == null || permissoes == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        Atendente atendente = atendenteRepository.findByUsernameAndAgenciaId(username, agenciaId)
+                .orElseGet(() -> {
+                    Atendente novo = new Atendente();
+                    novo.setUsername(username);
+                    novo.setAgenciaId(agenciaId);
+                    return novo;
+                });
+        atendente.getPermissoes().clear();
+        for (String perm : permissoes) {
+            PermissaoAtendente pa = new PermissaoAtendente();
+            pa.setAtendente(atendente);
+            pa.setPermissao(perm);
+            atendente.getPermissoes().add(pa);
+        }
+        atendenteRepository.save(atendente);
+        return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/atendentes/{agenciaId}/{username}")
+    @Transactional
+    public ResponseEntity<Void> atualizarPermissoes(
+            @PathVariable String agenciaId,
+            @PathVariable String username,
+            @RequestBody List<String> permissoes) {
+        Atendente atendente = atendenteRepository.findByUsernameAndAgenciaId(username, agenciaId)
+                .orElseThrow(() -> new RuntimeException("Atendente não encontrado: " + username));
+        atendente.getPermissoes().clear();
+        for (String perm : permissoes) {
+            PermissaoAtendente pa = new PermissaoAtendente();
+            pa.setAtendente(atendente);
+            pa.setPermissao(perm);
+            atendente.getPermissoes().add(pa);
+        }
+        atendenteRepository.save(atendente);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/atendentes/{agenciaId}/{username}")
+    @Transactional
+    public ResponseEntity<Void> removerAtendente(
+            @PathVariable String agenciaId,
+            @PathVariable String username) {
+        atendenteRepository.findByUsernameAndAgenciaId(username, agenciaId)
+                .ifPresent(atendenteRepository::delete);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/servicos")
     public List<Servico> listarServicos() {
         return servicoRepository.findAll();
+    }
+
+    // ─── Painéis ↔ Serviços ──────────────────────────────────
+
+    @GetMapping("/paineis-servicos/{painelId}")
+    public List<PainelServico> listarServicosDoPainel(@PathVariable Integer painelId) {
+        return painelServicoRepository.findByPainelId(painelId);
+    }
+
+    @PostMapping("/paineis-servicos")
+    @Transactional
+    public ResponseEntity<PainelServico> associarServicoPainel(@RequestBody Map<String, Object> body) {
+        Integer painelId = (Integer) body.get("painelId");
+        String servicoId = (String) body.get("servicoId");
+        if (painelId == null || servicoId == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        Painel painel = painelRepository.findById(painelId).orElse(null);
+        if (painel == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        PainelServico ps = new PainelServico();
+        ps.setPainel(painel);
+        ps.setServicoId(servicoId);
+        return ResponseEntity.ok(painelServicoRepository.save(ps));
+    }
+
+    @DeleteMapping("/paineis-servicos/{painelId}/{servicoId}")
+    @Transactional
+    public ResponseEntity<Void> desassociarServicoPainel(
+            @PathVariable Integer painelId,
+            @PathVariable String servicoId) {
+        painelServicoRepository.deleteByPainelIdAndServicoId(painelId, servicoId);
+        return ResponseEntity.noContent().build();
     }
 }

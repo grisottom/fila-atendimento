@@ -19,10 +19,6 @@ public class Estacao {
     private Integer numeroEstacao;
     private String localizacao;
 
-    @ManyToOne
-    @JoinColumn(name = "painel_id")
-    private Painel painel;
-
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getAgenciaId() { return agenciaId; }
@@ -33,8 +29,6 @@ public class Estacao {
     public void setNumeroEstacao(Integer numeroEstacao) { this.numeroEstacao = numeroEstacao; }
     public String getLocalizacao() { return localizacao; }
     public void setLocalizacao(String localizacao) { this.localizacao = localizacao; }
-    public Painel getPainel() { return painel; }
-    public void setPainel(Painel painel) { this.painel = painel; }
 
     public String getNomeExibicao() {
         String tipoLabel = switch (tipoEstacao) {

@@ -1,6 +1,7 @@
 #!/bin/bash
 # setup-usuarios-keycloak.sh
-# Gera e importa atendentes de teste no Keycloak via Admin REST API.
+# Gera e importa atendentes de teste no Keycloak (role: atendente) e no banco de dados
+# (tabelas: atendente + permissoes_atendente).
 # Idempotente: pode rodar múltiplas vezes sem duplicar usuários.
 #
 # Uso: ./teste/01-setup-usuarios-keycloak.sh [NUM_AGENCIAS] [PARALLELISM]
@@ -27,7 +28,7 @@ ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 TOTAL=$((NUM_AGENCIAS * NUM_ATENDENTES_POR_AGENCIA))
 
 echo "╔══════════════════════════════════════════╗"
-echo "║  Setup Usuários Keycloak (idempotente)  ║"
+echo "║  Setup Usuários Keycloak + Banco (idem) ║"
 echo "╠══════════════════════════════════════════╣"
 printf "║  Agências:    %-6d                   ║\n" "$NUM_AGENCIAS"
 printf "║  Atendentes:  %-6d (%d/agência)      ║\n" "$TOTAL" "$NUM_ATENDENTES_POR_AGENCIA"
@@ -36,7 +37,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # ─── FASE 1: GERAR JSON ──────────────────────────────────
-echo "[1/2] Gerando JSON com $TOTAL usuários (hashIterations=1000 para dev)..."
+echo "[1/3] Gerando JSON com $TOTAL usuários (hashIterations=1000 para dev)..."
 
 read HASH_VALUE HASH_SALT <<< $(python3 -c "
 import hashlib, base64, os
@@ -76,7 +77,7 @@ for a in $(seq 1 $NUM_AGENCIAS); do
       "credentialData": "$CREDENTIAL_DATA"
     }],
     "attributes": {"agencia": ["$AGENCIA_ID"]},
-    "realmRoles": ["basica", "normal", "especial"]
+    "realmRoles": ["atendente"]
   }
 EOF
   done
@@ -95,7 +96,7 @@ echo "       JSON gerado: $OUTPUT ($TAMANHO)"
 echo ""
 
 # ─── FASE 2: IMPORTAR NO KEYCLOAK ────────────────────────
-echo "[2/2] Importando no Keycloak ($KEYCLOAK_BASE_URL)..."
+echo "[2/3] Importando no Keycloak ($KEYCLOAK_BASE_URL)..."
 
 # Obtém token de admin
 TOKEN=$(curl -s -X POST "$KEYCLOAK_BASE_URL/realms/master/protocol/openid-connect/token" \
@@ -110,12 +111,17 @@ if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Busca roles para atribuição
+# Busca role 'atendente' para atribuição
 ROLES_JSON=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/roles" \
   -H "Authorization: Bearer $TOKEN")
-ROLE_MAPPINGS=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "basica" or .name == "normal" or .name == "especial")]')
+ROLE_MAPPINGS=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "atendente")]')
 
-echo "       Roles: $(echo "$ROLE_MAPPINGS" | jq length) encontradas"
+ROLE_COUNT=$(echo "$ROLE_MAPPINGS" | jq length)
+echo "       Role 'atendente': $ROLE_COUNT encontrada(s)"
+if [ "$ROLE_COUNT" -eq 0 ]; then
+  echo "ERRO: Role 'atendente' não encontrada no realm. Verifique o realm-export.json."
+  exit 1
+fi
 
 # Controle de progresso
 PROGRESS_DIR=$(mktemp -d)
@@ -162,7 +168,7 @@ seq 0 $((TOTAL - 1)) | xargs -P "$PARALLELISM" -I {} bash -c '
   create_user "{}" "$user_json"
 ' _
 
-# Relatório
+# Relatório Keycloak
 OK_COUNT=$(ls "$PROGRESS_DIR"/ok_* 2>/dev/null | wc -l)
 SKIP_COUNT=$(ls "$PROGRESS_DIR"/skip_* 2>/dev/null | wc -l)
 ERROR_COUNT=0
@@ -181,5 +187,41 @@ if [ "$ERROR_COUNT" -gt 0 ]; then
   head -5 "$PROGRESS_DIR/errors.log" | sed 's/^/         /'
 fi
 
+echo ""
+
+# ─── FASE 3: INSERIR PERMISSÕES NO BANCO ─────────────────
+echo "[3/3] Inserindo atendentes e permissões no banco de dados..."
+
+SQL_FILE="/tmp/teste-fila-atendentes.sql"
+echo "BEGIN;" > "$SQL_FILE"
+
+for a in $(seq 1 $NUM_AGENCIAS); do
+  AGENCIA_ID=$(printf "agencia-%04d" "$a")
+  for n in $(seq 1 $NUM_ATENDENTES_POR_AGENCIA); do
+    USERNAME="atend-${AGENCIA_ID}-${n}"
+
+    # Insere atendente (idempotente)
+    echo "INSERT INTO atendente (username, agencia_id) VALUES ('$USERNAME', '$AGENCIA_ID') ON CONFLICT (username, agencia_id) DO NOTHING;" >> "$SQL_FILE"
+
+    # Insere permissões (basica, normal, especial) para todos os atendentes de teste
+    echo "INSERT INTO permissoes_atendente (atendente_id, permissao) SELECT id, 'basica' FROM atendente WHERE username = '$USERNAME' AND agencia_id = '$AGENCIA_ID' ON CONFLICT (atendente_id, permissao) DO NOTHING;" >> "$SQL_FILE"
+    echo "INSERT INTO permissoes_atendente (atendente_id, permissao) SELECT id, 'normal' FROM atendente WHERE username = '$USERNAME' AND agencia_id = '$AGENCIA_ID' ON CONFLICT (atendente_id, permissao) DO NOTHING;" >> "$SQL_FILE"
+    echo "INSERT INTO permissoes_atendente (atendente_id, permissao) SELECT id, 'especial' FROM atendente WHERE username = '$USERNAME' AND agencia_id = '$AGENCIA_ID' ON CONFLICT (atendente_id, permissao) DO NOTHING;" >> "$SQL_FILE"
+  done
+done
+
+echo "COMMIT;" >> "$SQL_FILE"
+
+docker cp "$SQL_FILE" fila-postgres:/tmp/atendentes.sql
+docker exec fila-postgres psql -U fila -d fila_atendimento -f /tmp/atendentes.sql > /dev/null 2>&1
+rm -f "$SQL_FILE"
+
+ATENDENTES_CRIADOS=$(docker exec fila-postgres psql -U fila -d fila_atendimento -t -A -c \
+  "SELECT COUNT(*) FROM atendente WHERE username LIKE 'atend-agencia-%';")
+PERMISSOES_CRIADAS=$(docker exec fila-postgres psql -U fila -d fila_atendimento -t -A -c \
+  "SELECT COUNT(*) FROM permissoes_atendente pa JOIN atendente a ON pa.atendente_id = a.id WHERE a.username LIKE 'atend-agencia-%';")
+
+echo "       Atendentes no banco:  $ATENDENTES_CRIADOS"
+echo "       Permissões no banco:  $PERMISSOES_CRIADAS"
 echo ""
 echo "Setup concluído."

@@ -22,7 +22,7 @@ export default function ConfiguracaoPainel({ onAtivar, username }) {
       <form onSubmit={ativar} style={{ display: "flex", flexDirection: "column", gap: 12, width: 300 }}>
         <label>
           Agência:
-          <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" required style={{ width: "100%" }} />
+          <input value={agenciaId} readOnly placeholder="agencia-01" required style={{ width: "100%", background: "#f0f0f0" }} />
         </label>
         <label>
           Número do Painel:

@@ -6,8 +6,14 @@ function getStorageKey() {
   return `app_agencia_${keycloak.tokenParsed?.preferred_username}`;
 }
 
+function getAgenciaDoToken() {
+  const ag = keycloak.tokenParsed?.agencia;
+  if (Array.isArray(ag)) return ag[0] || "";
+  return ag || "";
+}
+
 export default function Atendentes() {
-  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
+  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || getAgenciaDoToken());
   const [servicos, setServicos] = useState([]);
   const [atendentes, setAtendentes] = useState([]);
 
@@ -56,7 +62,7 @@ export default function Atendentes() {
       <h2>Atendentes da Agência</h2>
       <div style={{ marginBottom: 16 }}>
         <label>Agência: </label>
-        <input value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" />
+        <input value={agenciaId} readOnly placeholder="agencia-01" style={{ background: "#f0f0f0" }} />
         <button onClick={carregar} style={{ marginLeft: 8 }}>Carregar</button>
       </div>
 

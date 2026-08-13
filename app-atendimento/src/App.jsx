@@ -19,7 +19,7 @@ export default function App() {
         <strong>Atendimento</strong>
         {isAdmin && <NavLink to="/configuracao">Configuração</NavLink>}
         {isAdmin && <NavLink to="/atendentes">Atendentes</NavLink>}
-        {(isAdmin || hasRole("basica")) && <NavLink to="/triagem">Triagem</NavLink>}
+        {(isAdmin || hasRole("atendente")) && <NavLink to="/triagem">Triagem</NavLink>}
         <NavLink to="/atendimento">Atendimento</NavLink>
         <span style={{ marginLeft: "auto" }}>
           {keycloak.tokenParsed?.preferred_username}

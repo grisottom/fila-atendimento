@@ -26,8 +26,8 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_admin")
-                .requestMatchers("/api/triagem/**").hasAnyAuthority("ROLE_admin", "ROLE_basica")
-                .requestMatchers("/api/atendimento/**").authenticated()
+                .requestMatchers("/api/triagem/**").hasAnyAuthority("ROLE_admin", "ROLE_atendente")
+                .requestMatchers("/api/atendimento/**").hasAnyAuthority("ROLE_admin", "ROLE_atendente")
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter())));

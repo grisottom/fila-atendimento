@@ -24,13 +24,6 @@ spring:
           issuer-uri: http://localhost:8080/realms/fila-atendimento
           jwk-set-uri: http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/certs
 
-app:
-  keycloak:
-    admin-url: http://localhost:8080
-    realm: fila-atendimento
-    admin-user: admin
-    admin-password: admin
-
 logging:
   level:
     root: WARN

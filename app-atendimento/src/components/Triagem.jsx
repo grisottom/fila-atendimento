@@ -29,10 +29,16 @@ function salvarHistorico(items) {
   }));
 }
 
+function getAgenciaDoToken() {
+  const ag = keycloak.tokenParsed?.agencia;
+  if (Array.isArray(ag)) return ag[0] || "";
+  return ag || "";
+}
+
 export default function Triagem() {
   const [cpf, setCpf] = useState("");
   const [nomePessoa, setNomePessoa] = useState("");
-  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || "");
+  const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || getAgenciaDoToken());
   const [servicoId, setServicoId] = useState("");
   const [atendimentoId, setAtendimentoId] = useState(null);
   const [resultado, setResultado] = useState(null);
@@ -54,8 +60,8 @@ export default function Triagem() {
   const dialogRef = useRef(null);
 
   useEffect(() => {
-    if (!agenciaId) agenciaRef.current?.focus();
-    else { cpfRef.current?.focus(); carregarAgendamentos(); }
+    cpfRef.current?.focus();
+    if (agenciaId) carregarAgendamentos();
   }, []);
 
   useEffect(() => {
@@ -150,7 +156,7 @@ export default function Triagem() {
       <form onSubmit={recepcionar}>
         <div>
           <label>Agência: </label>
-          <input ref={agenciaRef} value={agenciaId} onChange={(e) => setAgenciaId(e.target.value)} placeholder="agencia-01" required />
+          <input ref={agenciaRef} value={agenciaId} readOnly placeholder="agencia-01" required style={{ background: "#f0f0f0" }} />
         </div>
         <div>
           <label>CPF: </label>

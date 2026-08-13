@@ -5,9 +5,11 @@ import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.FilaAtendimento;
 import com.fila.apiatendimento.entity.Painel;
+import com.fila.apiatendimento.entity.PainelServico;
 import com.fila.apiatendimento.entity.Servico;
 import com.fila.apiatendimento.repository.EstacaoRepository;
 import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
+import com.fila.apiatendimento.repository.PainelServicoRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
 import jakarta.jms.Message;
 import org.slf4j.Logger;
@@ -28,12 +30,10 @@ public class AtendimentoService {
 
     private static final Logger log = LoggerFactory.getLogger(AtendimentoService.class);
 
-    // FAULT INJECTION: contador para falhar nos 3 primeiros itens consumidos
-    // private static final java.util.concurrent.atomic.AtomicInteger faultCountAtendimento = new java.util.concurrent.atomic.AtomicInteger(0);
-
     private final FilaAtendimentoRepository filaAtendimentoRepository;
     private final EstacaoRepository estacaoRepository;
     private final ServicoRepository servicoRepository;
+    private final PainelServicoRepository painelServicoRepository;
     private final JmsTemplate jmsTemplate;
     private final JmsTemplate jmsQueueTemplate;
     private final ObjectMapper objectMapper;
@@ -42,6 +42,7 @@ public class AtendimentoService {
     public AtendimentoService(FilaAtendimentoRepository filaRepository,
                               EstacaoRepository estacaoRepository,
                               ServicoRepository servicoRepository,
+                              PainelServicoRepository painelServicoRepository,
                               JmsTemplate jmsTemplate,
                               @Qualifier("jmsQueueTemplate") JmsTemplate jmsQueueTemplate,
                               ObjectMapper objectMapper,
@@ -49,6 +50,7 @@ public class AtendimentoService {
         this.filaAtendimentoRepository = filaRepository;
         this.estacaoRepository = estacaoRepository;
         this.servicoRepository = servicoRepository;
+        this.painelServicoRepository = painelServicoRepository;
         this.jmsTemplate = jmsTemplate;
         this.jmsQueueTemplate = jmsQueueTemplate;
         this.objectMapper = objectMapper;
@@ -71,10 +73,6 @@ public class AtendimentoService {
         Estacao estacao = estacaoRepository.findById(estacaoId)
                 .orElseThrow(() -> new RuntimeException("Estação não encontrada: " + estacaoId));
 
-        if (estacao.getPainel() == null) {
-            throw new RuntimeException("Estação sem painel associado");
-        }
-
         // Verifica se o atendente já tem uma chamada ativa (idempotência)
         List<FilaAtendimento> emChamada = filaAtendimentoRepository.findByAgenciaIdAndStatusIn(
                 estacao.getAgenciaId(), List.of("CHAMANDO"));
@@ -84,7 +82,7 @@ public class AtendimentoService {
                 .orElse(null);
 
         if (chamadaAtiva != null) {
-            publicarNoTopicoAgenciaPainel(estacao, chamadaAtiva, "CHAMANDO");
+            publicarNosPaineisDoServico(chamadaAtiva, estacao, "CHAMANDO");
             return toResponse(chamadaAtiva, estacao.getNomeExibicao());
         }
 
@@ -109,11 +107,18 @@ public class AtendimentoService {
             FilaAtendimento proximo = filaAtendimentoRepository.findById(id)
                     .orElseThrow(() -> new RuntimeException("Atendimento não encontrado no banco: " + id));
 
-            // Idempotência: descarta mensagens duplicadas (reentrega por crash antes do ack ou outbox republicando)
+            // Idempotência: descarta mensagens duplicadas
             if (!"AGUARDANDO".equals(proximo.getStatus())) {
                 log.info("Mensagem reentregue para filaId={} com status={}, descartando", filaId, proximo.getStatus());
-                // Tenta consumir o próximo recursivamente
                 return chamarProximo(estacaoId, username, permissoes);
+            }
+
+            // Verifica se o serviço está associado a pelo menos um painel
+            List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(proximo.getServicoId());
+            if (paineisServico.isEmpty()) {
+                // Reseta para o outbox republicar (devolve à fila)
+                outboxPublisher.resetarPublicacao(id);
+                throw new RuntimeException("Serviço '" + proximo.getServicoId() + "' não está associado a nenhum painel");
             }
 
             proximo.setStatus("CHAMANDO");
@@ -121,20 +126,13 @@ public class AtendimentoService {
             proximo.setAtendenteUsername(username);
             proximo.setHorarioChamada(LocalDateTime.now());
 
-            // FAULT INJECTION: simula erro nos 3 primeiros itens consumidos
-            // if (faultCountAtendimento.incrementAndGet() <= 1) {
-            //     log.warn("[FAULT] Simulando erro de transação no atendimento (item #{}) para filaId={}", faultCountAtendimento.get(), filaId);
-            //     throw new RuntimeException("[FAULT] Erro simulado de transação no banco (consumo)");
-            // }
-
             filaAtendimentoRepository.save(proximo);
 
-            publicarNoTopicoAgenciaPainel(estacao, proximo, "CHAMANDO");
+            publicarNosPaineisDoServico(proximo, estacao, "CHAMANDO");
 
             return toResponse(proximo, estacao.getNomeExibicao());
 
         } catch (Exception e) {
-            // Mensagem já consumida do broker; reseta flag para o outbox republicar
             log.warn("Erro no chamarProximo para filaId={}: {}. Resetando publicação.", filaId, e.getMessage());
             if (filaId != null) {
                 outboxPublisher.resetarPublicacao(filaId);
@@ -155,9 +153,7 @@ public class AtendimentoService {
         fila.setPosicaoFila(maxPosicao);
         filaAtendimentoRepository.save(fila);
 
-        if (estacao != null) {
-            publicarNoTopicoAgenciaPainel(estacao, fila, "AUSENTE");
-        }
+        publicarNosPaineisDoServico(fila, estacao, "AUSENTE");
 
         return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
@@ -171,10 +167,8 @@ public class AtendimentoService {
         fila.setHorarioInicioAtendimento(LocalDateTime.now());
         filaAtendimentoRepository.save(fila);
 
-        Estacao estacao = estacaoRepository.findById(fila.getEstacaoId()).orElse(null);
-        if (estacao != null) {
-            publicarNoTopicoAgenciaPainel(estacao, fila, "EM_ATENDIMENTO");
-        }
+        Estacao estacao = fila.getEstacaoId() != null ? estacaoRepository.findById(fila.getEstacaoId()).orElse(null) : null;
+        publicarNosPaineisDoServico(fila, estacao, "EM_ATENDIMENTO");
 
         return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
@@ -191,11 +185,7 @@ public class AtendimentoService {
         fila.setHorarioFimAtendimento(LocalDateTime.now());
         filaAtendimentoRepository.save(fila);
 
-        if (estacao != null) {
-            publicarNoTopicoAgenciaPainel(estacao, fila, "FINALIZADO");
-        } else {
-            log.warn("finalizarAtendimento: estacaoId nulo para atendimento {}, não publicou no broker", atendimentoId);
-        }
+        publicarNosPaineisDoServico(fila, estacao, "FINALIZADO");
 
         return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
@@ -211,33 +201,42 @@ public class AtendimentoService {
         fila.setHorarioFimAtendimento(null);
         filaAtendimentoRepository.save(fila);
 
-        if (estacao != null) {
-            publicarNoTopicoAgenciaPainel(estacao, fila, "CANCELADO");
-        }
+        publicarNosPaineisDoServico(fila, estacao, "CANCELADO");
 
         return toResponse(fila, estacao != null ? estacao.getNomeExibicao() : null);
     }
 
-    private void publicarNoTopicoAgenciaPainel(Estacao estacao, FilaAtendimento fila, String status) {
-        Painel painel = estacao.getPainel();
-        if (painel == null) return;
-
-        String topicAgenciaPainel = "agencia." + estacao.getAgenciaId() + ".painel." + painel.getNumeroPainel();
-        String json;
-        try {
-            json = objectMapper.writeValueAsString(Map.of(
-                    "agenciaId", estacao.getAgenciaId(),
-                    "painelId", painel.getNumeroPainel(),
-                    "senha", fila.getSenha(),
-                    "nomePessoa", fila.getNomePessoa(),
-                    "estacao", estacao.getNomeExibicao(),
-                    "status", status
-            ));
-        } catch (Exception e) {
-            throw new RuntimeException("Erro ao serializar mensagem para o broker", e);
+    /**
+     * Publica evento em todos os painéis associados ao serviço do atendimento.
+     */
+    private void publicarNosPaineisDoServico(FilaAtendimento fila, Estacao estacao, String status) {
+        List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(fila.getServicoId());
+        if (paineisServico.isEmpty()) {
+            log.warn("Serviço {} sem painéis associados, evento {} não publicado para filaId={}",
+                    fila.getServicoId(), status, fila.getId());
+            return;
         }
 
-        jmsTemplate.send(topicAgenciaPainel, session -> session.createTextMessage(json));
+        String estacaoNome = estacao != null ? estacao.getNomeExibicao() : "N/A";
+
+        for (PainelServico ps : paineisServico) {
+            Painel painel = ps.getPainel();
+            String topico = "agencia." + fila.getAgenciaId() + ".painel." + painel.getNumeroPainel();
+            String json;
+            try {
+                json = objectMapper.writeValueAsString(Map.of(
+                        "agenciaId", fila.getAgenciaId(),
+                        "painelId", painel.getNumeroPainel(),
+                        "senha", fila.getSenha(),
+                        "nomePessoa", fila.getNomePessoa(),
+                        "estacao", estacaoNome,
+                        "status", status
+                ));
+            } catch (Exception e) {
+                throw new RuntimeException("Erro ao serializar mensagem para o broker", e);
+            }
+            jmsTemplate.send(topico, session -> session.createTextMessage(json));
+        }
     }
 
     private AtendimentoResponse toResponse(FilaAtendimento fila, String estacaoNome) {

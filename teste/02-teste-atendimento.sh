@@ -237,6 +237,16 @@ rm -f "$LOG_DIR"/*.tmp "$LOG_DIR"/agencia-*.log "$LOG_DIR/ABORT"
 > "$ERROS_FILE"
 log_ok "Fila e logs limpos."
 
+# ─── PASSO 0: GARANTIR PERMISSÕES DO TRIAGEM NO BANCO ────
+log_info "Garantindo permissões do atendente triagem no banco..."
+docker exec fila-postgres psql -U fila -d fila_atendimento -c "
+INSERT INTO atendente (username, agencia_id) VALUES ('$TRIAGEM_USER', 'agencia-01') ON CONFLICT (username, agencia_id) DO NOTHING;
+INSERT INTO permissoes_atendente (atendente_id, permissao)
+  SELECT id, 'basica' FROM atendente WHERE username = '$TRIAGEM_USER' AND agencia_id = 'agencia-01'
+  ON CONFLICT (atendente_id, permissao) DO NOTHING;
+" > /dev/null 2>&1
+log_ok "Permissões do triagem ok."
+
 # ─── PASSO 0: CRIAR AGÊNCIAS, PAINÉIS E ESTAÇÕES ─────────
 log_info "Criando infraestrutura no banco (agências, painéis, estações)..."
 
@@ -263,15 +273,60 @@ BEGIN
       SELECT id INTO p_id FROM painel
       WHERE agencia_id = agencia_var AND numero_painel = p;
 
-      INSERT INTO estacao (agencia_id, tipo_estacao, numero_estacao, localizacao, painel_id)
-      VALUES (agencia_var, 'GUICHE', 100 + p, 'Teste - Guichê ' || p, p_id)
+      INSERT INTO estacao (agencia_id, tipo_estacao, numero_estacao, localizacao)
+      VALUES (agencia_var, 'GUICHE', 100 + p, 'Teste - Guichê ' || p)
       ON CONFLICT (agencia_id, tipo_estacao, numero_estacao) DO NOTHING;
+
+      -- Associa todos os serviços ao painel
+      INSERT INTO paineis_servicos (painel_id, servico_id)
+      VALUES (p_id, 'servico-basico') ON CONFLICT (painel_id, servico_id) DO NOTHING;
+      INSERT INTO paineis_servicos (painel_id, servico_id)
+      VALUES (p_id, 'servico-normal-01') ON CONFLICT (painel_id, servico_id) DO NOTHING;
+      INSERT INTO paineis_servicos (painel_id, servico_id)
+      VALUES (p_id, 'servico-normal-02') ON CONFLICT (painel_id, servico_id) DO NOTHING;
+      INSERT INTO paineis_servicos (painel_id, servico_id)
+      VALUES (p_id, 'servico-especial-01') ON CONFLICT (painel_id, servico_id) DO NOTHING;
     END LOOP;
   END LOOP;
 END\$\$;"
 
 docker exec fila-postgres psql -U fila -d fila_atendimento -c "$SQL_INFRA" > /dev/null 2>&1
 log_ok "Infraestrutura criada."
+
+# Garantir que atendentes de teste existam no banco (permissões)
+log_info "Verificando atendentes de teste no banco..."
+SQL_ATEND="
+DO \$\$
+DECLARE
+  a INTEGER;
+  n INTEGER;
+  agencia_var VARCHAR(50);
+  username_var VARCHAR(100);
+  atend_id INTEGER;
+BEGIN
+  FOR a IN 1..$NUM_AGENCIAS LOOP
+    agencia_var := 'agencia-' || LPAD(a::text, 4, '0');
+    FOR n IN 1..$NUM_ATENDENTES_POR_AGENCIA LOOP
+      username_var := 'atend-' || agencia_var || '-' || n;
+      INSERT INTO atendente (username, agencia_id)
+      VALUES (username_var, agencia_var)
+      ON CONFLICT (username, agencia_id) DO NOTHING;
+
+      SELECT id INTO atend_id FROM atendente
+      WHERE username = username_var AND agencia_id = agencia_var;
+
+      INSERT INTO permissoes_atendente (atendente_id, permissao)
+      VALUES (atend_id, 'basica') ON CONFLICT (atendente_id, permissao) DO NOTHING;
+      INSERT INTO permissoes_atendente (atendente_id, permissao)
+      VALUES (atend_id, 'normal') ON CONFLICT (atendente_id, permissao) DO NOTHING;
+      INSERT INTO permissoes_atendente (atendente_id, permissao)
+      VALUES (atend_id, 'especial') ON CONFLICT (atendente_id, permissao) DO NOTHING;
+    END LOOP;
+  END LOOP;
+END\$\$;"
+
+docker exec fila-postgres psql -U fila -d fila_atendimento -c "$SQL_ATEND" > /dev/null 2>&1
+log_ok "Atendentes de teste garantidos no banco."
 
 # ─── PASSO 0b: INSERIR PESSOAS NO BANCO (em batches) ─────
 log_info "Inserindo $TOTAL_ATENDIMENTOS pessoas no banco (transação única)..."

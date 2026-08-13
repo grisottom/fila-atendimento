@@ -4,6 +4,7 @@ import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.dto.ChamarProximoRequest;
 import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.Servico;
+import com.fila.apiatendimento.repository.AtendenteRepository;
 import com.fila.apiatendimento.repository.EstacaoRepository;
 import com.fila.apiatendimento.service.AtendimentoService;
 import org.springframework.http.ResponseEntity;
@@ -21,10 +22,14 @@ public class AtendimentoController {
 
     private final AtendimentoService atendimentoService;
     private final EstacaoRepository estacaoRepository;
+    private final AtendenteRepository atendenteRepository;
 
-    public AtendimentoController(AtendimentoService atendimentoService, EstacaoRepository estacaoRepository) {
+    public AtendimentoController(AtendimentoService atendimentoService,
+                                 EstacaoRepository estacaoRepository,
+                                 AtendenteRepository atendenteRepository) {
         this.atendimentoService = atendimentoService;
         this.estacaoRepository = estacaoRepository;
+        this.atendenteRepository = atendenteRepository;
     }
 
     @PostMapping("/chamar")
@@ -32,7 +37,10 @@ public class AtendimentoController {
             @RequestBody ChamarProximoRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         String username = jwt.getClaimAsString("preferred_username");
-        List<String> permissoes = extrairPermissoes(jwt);
+        // A agência é obtida da estação informada
+        Estacao estacao = estacaoRepository.findById(request.estacaoId())
+                .orElseThrow(() -> new RuntimeException("Estação não encontrada: " + request.estacaoId()));
+        List<String> permissoes = obterPermissoes(username, estacao.getAgenciaId(), jwt);
         return ResponseEntity.ok(atendimentoService.chamarProximo(request.estacaoId(), username, permissoes));
     }
 
@@ -70,8 +78,11 @@ public class AtendimentoController {
     }
 
     @GetMapping("/meus-servicos")
-    public ResponseEntity<List<Servico>> meusServicos(@AuthenticationPrincipal Jwt jwt) {
-        List<String> permissoes = extrairPermissoes(jwt);
+    public ResponseEntity<List<Servico>> meusServicos(
+            @RequestParam String agenciaId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String username = jwt.getClaimAsString("preferred_username");
+        List<String> permissoes = obterPermissoes(username, agenciaId, jwt);
         return ResponseEntity.ok(atendimentoService.listarServicosPorPermissoes(permissoes));
     }
 
@@ -79,15 +90,30 @@ public class AtendimentoController {
     public ResponseEntity<List<AtendimentoResponse>> filaDisponivel(
             @RequestParam String agenciaId,
             @AuthenticationPrincipal Jwt jwt) {
-        List<String> permissoes = extrairPermissoes(jwt);
+        String username = jwt.getClaimAsString("preferred_username");
+        List<String> permissoes = obterPermissoes(username, agenciaId, jwt);
         return ResponseEntity.ok(atendimentoService.listarFilaDisponivel(agenciaId, permissoes));
     }
 
-    @SuppressWarnings("unchecked")
-    private List<String> extrairPermissoes(Jwt jwt) {
+    /**
+     * Obtém as permissões de atendimento do banco de dados.
+     * Para admin, retorna todas as permissões (basica, normal, especial).
+     */
+    private List<String> obterPermissoes(String username, String agenciaId, Jwt jwt) {
+        if (isAdmin(jwt)) {
+            return List.of("basica", "normal", "especial");
+        }
+        if (agenciaId == null || agenciaId.isBlank()) {
+            return Collections.emptyList();
+        }
+        return atendenteRepository.findPermissoesByUsernameAndAgenciaId(username, agenciaId);
+    }
+
+    private boolean isAdmin(Jwt jwt) {
         Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
-        if (realmAccess == null) return Collections.emptyList();
+        if (realmAccess == null) return false;
+        @SuppressWarnings("unchecked")
         List<String> roles = (List<String>) realmAccess.get("roles");
-        return roles != null ? roles : Collections.emptyList();
+        return roles != null && roles.contains("admin");
     }
 }
