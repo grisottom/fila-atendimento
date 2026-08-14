@@ -237,6 +237,26 @@ rm -f "$LOG_DIR"/*.tmp "$LOG_DIR"/agencia-*.log "$LOG_DIR/ABORT"
 > "$ERROS_FILE"
 log_ok "Fila e logs limpos."
 
+# Purga filas do Artemis (reinicia o broker para limpar tudo de uma vez)
+log_info "Reiniciando Artemis para limpar mensagens órfãs..."
+docker restart fila-artemis > /dev/null 2>&1
+
+# Aguarda Artemis ficar healthy
+RETRIES=0
+while [ $RETRIES -lt 30 ]; do
+  if docker exec fila-artemis curl -sf http://localhost:8161/console > /dev/null 2>&1; then
+    break
+  fi
+  RETRIES=$((RETRIES + 1))
+  sleep 1
+done
+
+if [ $RETRIES -ge 30 ]; then
+  log_erro "Artemis não ficou healthy após restart."
+  exit 1
+fi
+log_ok "Artemis reiniciado (filas limpas)."
+
 # ─── PASSO 0: GARANTIR PERMISSÕES DO TRIAGEM NO BANCO ────
 log_info "Garantindo permissões do atendente triagem no banco..."
 docker exec fila-postgres psql -U fila -d fila_atendimento -c "

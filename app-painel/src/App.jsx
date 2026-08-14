@@ -16,7 +16,7 @@ export default function App() {
     return (
       <div style={{ padding: 40, textAlign: "center" }}>
         <h2>Acesso negado</h2>
-        <p>Somente usuários com papel Admin podem ativar o Painel.</p>
+        <p>Somente usuários com papel 'admin' podem ativar o Painel.</p>
         <button onClick={() => keycloak.logout()}>Sair</button>
       </div>
     );

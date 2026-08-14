@@ -1,6 +1,7 @@
 #!/bin/bash
 # teste-massivo-sse.sh
 # Simula conexões SSE para múltiplas agências e painéis sem usar navegador.
+# Cada agência usa o token do seu admin (admin-agencia-XXXX).
 # Eventos são exibidos em TEMPO REAL no terminal conforme chegam.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,7 +9,6 @@ source "$SCRIPT_DIR/config.sh"
 
 BASE_URL="$BASE_URL_PAINEL"
 CLIENT_ID="fila-painel"
-USERNAME="ger"
 PASSWORD="pwd"
 
 TOTAL_CONEXOES=$((NUM_AGENCIAS * NUM_PAINEIS_POR_AGENCIA))
@@ -19,28 +19,50 @@ echo "Painéis por agência: $NUM_PAINEIS_POR_AGENCIA"
 echo "Total de conexões SSE: $TOTAL_CONEXOES"
 echo ""
 
-# Obtém token do Keycloak
-echo "Obtendo token do Keycloak..."
-TOKEN=$(curl -s -X POST "$KEYCLOAK_URL" \
-  -d "client_id=$CLIENT_ID" \
-  -d "grant_type=password" \
-  -d "username=$USERNAME" \
-  -d "password=$PASSWORD" | jq -r '.access_token')
+# Obtém tokens por agência
+echo "Obtendo tokens dos admins (1 por agência)..."
+TOKEN_DIR=$(mktemp -d)
 
-if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
-  echo "ERRO: Não foi possível obter token. Verifique as credenciais e se o Keycloak está rodando."
+TOKENS_OK=0
+TOKENS_FAIL=0
+for a in $(seq 1 $NUM_AGENCIAS); do
+  AGENCIA_ID=$(printf "agencia-%04d" "$a")
+  USERNAME="admin-${AGENCIA_ID}"
+
+  TOKEN=$(curl -s -X POST "$KEYCLOAK_URL" \
+    -d "client_id=$CLIENT_ID" \
+    -d "grant_type=password" \
+    -d "username=$USERNAME" \
+    -d "password=$PASSWORD" | jq -r '.access_token')
+
+  if [ "$TOKEN" != "null" ] && [ -n "$TOKEN" ]; then
+    echo "$TOKEN" > "$TOKEN_DIR/$AGENCIA_ID"
+    TOKENS_OK=$((TOKENS_OK + 1))
+  else
+    TOKENS_FAIL=$((TOKENS_FAIL + 1))
+  fi
+
+  if [ $((a % 50)) -eq 0 ]; then
+    printf "\r       Progresso: %d/%d tokens" "$a" "$NUM_AGENCIAS"
+  fi
+done
+
+echo ""
+echo "       Tokens obtidos: $TOKENS_OK | Falhas: $TOKENS_FAIL"
+
+if [ "$TOKENS_OK" -eq 0 ]; then
+  echo "ERRO: Nenhum token obtido. Verifique se os admins foram criados (01-setup-usuarios-keycloak.sh)."
+  rm -rf "$TOKEN_DIR"
   exit 1
 fi
 
-echo "Token obtido com sucesso."
 echo ""
 echo "Conectando $TOTAL_CONEXOES painéis..."
 echo "Eventos aparecerão abaixo em tempo real. Ctrl+C para encerrar."
 echo "────────────────────────────────────────────────────────"
 
-# Limpa processos ao sair (Ctrl+C ou kill)
+# Controle de stats e cleanup
 STATS_DIR=$(mktemp -d)
-trap "rm -rf $STATS_DIR" EXIT
 
 cleanup() {
   echo ""
@@ -69,6 +91,8 @@ cleanup() {
     echo "  Outros:            $OUTROS"
   fi
   echo "════════════════════════════════════════"
+
+  rm -rf "$STATS_DIR" "$TOKEN_DIR"
   exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -83,6 +107,12 @@ echo 0 > "$STATS_DIR/AGUARDANDO"
 # Abre conexões SSE para cada agência/painel
 for a in $(seq 1 $NUM_AGENCIAS); do
   AGENCIA_ID=$(printf "agencia-%04d" "$a")
+  TOKEN_FILE="$TOKEN_DIR/$AGENCIA_ID"
+
+  # Pula agências sem token
+  [ ! -f "$TOKEN_FILE" ] && continue
+  TOKEN=$(cat "$TOKEN_FILE")
+
   for p in $(seq 1 $NUM_PAINEIS_POR_AGENCIA); do
     curl -s -N "$BASE_URL/api/painel/sse/$AGENCIA_ID/$p?access_token=$TOKEN" | \
       while IFS= read -r line; do

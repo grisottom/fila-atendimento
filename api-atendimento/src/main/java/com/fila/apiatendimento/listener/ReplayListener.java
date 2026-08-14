@@ -77,7 +77,8 @@ public class ReplayListener {
         int publicados = 0;
         for (FilaAtendimento fila : ativos) {
             // Verifica se o serviço do atendimento está associado ao painel solicitado
-            List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(fila.getServicoId());
+            List<PainelServico> paineisServico = painelServicoRepository
+                    .findByServicoIdAndPainelAgenciaId(fila.getServicoId(), agenciaId);
             boolean pertenceAoPainel = paineisServico.stream()
                     .anyMatch(ps -> ps.getPainel().getNumeroPainel() == painelId);
 

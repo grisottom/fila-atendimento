@@ -26,18 +26,20 @@ ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 
 TOTAL=$((NUM_AGENCIAS * NUM_ATENDENTES_POR_AGENCIA))
+TOTAL_ADMINS=$NUM_AGENCIAS
 
 echo "╔══════════════════════════════════════════╗"
 echo "║  Setup Usuários Keycloak + Banco (idem) ║"
 echo "╠══════════════════════════════════════════╣"
 printf "║  Agências:    %-6d                   ║\n" "$NUM_AGENCIAS"
+printf "║  Admins:      %-6d (1/agência)       ║\n" "$TOTAL_ADMINS"
 printf "║  Atendentes:  %-6d (%d/agência)      ║\n" "$TOTAL" "$NUM_ATENDENTES_POR_AGENCIA"
 printf "║  Paralelismo: %-6d                   ║\n" "$PARALLELISM"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
 # ─── FASE 1: GERAR JSON ──────────────────────────────────
-echo "[1/3] Gerando JSON com $TOTAL usuários (hashIterations=1000 para dev)..."
+echo "[1/3] Gerando JSON com $TOTAL_ADMINS admins + $TOTAL atendentes (hashIterations=1000 para dev)..."
 
 read HASH_VALUE HASH_SALT <<< $(python3 -c "
 import hashlib, base64, os
@@ -54,14 +56,37 @@ echo "[" > "$OUTPUT"
 PRIMEIRO=1
 for a in $(seq 1 $NUM_AGENCIAS); do
   AGENCIA_ID=$(printf "agencia-%04d" "$a")
+
+  # Admin da agência
+  USERNAME="admin-${AGENCIA_ID}"
+  if [ $PRIMEIRO -eq 1 ]; then
+    PRIMEIRO=0
+  else
+    echo "," >> "$OUTPUT"
+  fi
+
+  cat >> "$OUTPUT" << EOF
+  {
+    "username": "$USERNAME",
+    "enabled": true,
+    "firstName": "Admin",
+    "lastName": "$AGENCIA_ID",
+    "email": "${USERNAME}@teste.local",
+    "emailVerified": true,
+    "credentials": [{
+      "type": "password",
+      "secretData": "$SECRET_DATA",
+      "credentialData": "$CREDENTIAL_DATA"
+    }],
+    "attributes": {"agencia": ["$AGENCIA_ID"]},
+    "realmRoles": ["admin"]
+  }
+EOF
+
+  # Atendentes da agência
   for n in $(seq 1 $NUM_ATENDENTES_POR_AGENCIA); do
     USERNAME="atend-${AGENCIA_ID}-${n}"
-
-    if [ $PRIMEIRO -eq 1 ]; then
-      PRIMEIRO=0
-    else
-      echo "," >> "$OUTPUT"
-    fi
+    echo "," >> "$OUTPUT"
 
     cat >> "$OUTPUT" << EOF
   {
@@ -111,15 +136,39 @@ if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Busca role 'atendente' para atribuição
+# Registra atributo 'agencia' no User Profile (necessário no KC 24 para aceitar via API)
+echo "       Registrando atributo 'agencia' no User Profile..."
+UP_CONFIG=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/profile" \
+  -H "Authorization: Bearer $TOKEN")
+
+HAS_AGENCIA=$(echo "$UP_CONFIG" | jq '[.attributes[] | select(.name == "agencia")] | length')
+if [ "$HAS_AGENCIA" -eq 0 ]; then
+  UPDATED_CONFIG=$(echo "$UP_CONFIG" | jq '.attributes += [{
+    "name": "agencia",
+    "displayName": "Agência",
+    "permissions": {"view": ["admin", "user"], "edit": ["admin"]},
+    "validations": {"length": {"max": 50}}
+  }]')
+  curl -s -o /dev/null -w "" \
+    -X PUT "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/profile" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATED_CONFIG"
+  echo "       Atributo 'agencia' registrado."
+else
+  echo "       Atributo 'agencia' já existe no User Profile."
+fi
+
+# Busca roles para atribuição
 ROLES_JSON=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/roles" \
   -H "Authorization: Bearer $TOKEN")
-ROLE_MAPPINGS=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "atendente")]')
+ROLE_ATENDENTE=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "atendente")]')
+ROLE_ADMIN=$(echo "$ROLES_JSON" | jq -c '[.[] | select(.name == "admin")]')
 
-ROLE_COUNT=$(echo "$ROLE_MAPPINGS" | jq length)
-echo "       Role 'atendente': $ROLE_COUNT encontrada(s)"
-if [ "$ROLE_COUNT" -eq 0 ]; then
-  echo "ERRO: Role 'atendente' não encontrada no realm. Verifique o realm-export.json."
+echo "       Role 'atendente': $(echo "$ROLE_ATENDENTE" | jq length) encontrada(s)"
+echo "       Role 'admin': $(echo "$ROLE_ADMIN" | jq length) encontrada(s)"
+if [ "$(echo "$ROLE_ATENDENTE" | jq length)" -eq 0 ] || [ "$(echo "$ROLE_ADMIN" | jq length)" -eq 0 ]; then
+  echo "ERRO: Roles 'atendente' e/ou 'admin' não encontradas no realm."
   exit 1
 fi
 
@@ -131,6 +180,7 @@ create_user() {
   local idx=$1
   local user_json=$2
   local username=$(echo "$user_json" | jq -r '.username')
+  local role=$(echo "$user_json" | jq -r '.realmRoles[0]')
 
   local payload=$(echo "$user_json" | jq '{
     username, enabled, firstName, lastName, email, emailVerified, attributes, credentials
@@ -146,11 +196,15 @@ create_user() {
     local user_id=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users?username=$username&exact=true" \
       -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
     if [ "$user_id" != "null" ] && [ -n "$user_id" ]; then
+      local role_mapping="$ROLE_ATENDENTE"
+      if [ "$role" = "admin" ]; then
+        role_mapping="$ROLE_ADMIN"
+      fi
       curl -s -o /dev/null -X POST \
         "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/$user_id/role-mappings/realm" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "$ROLE_MAPPINGS"
+        -d "$role_mapping"
     fi
     touch "$PROGRESS_DIR/ok_$idx"
   elif [ "$http_code" = "409" ]; then
@@ -161,9 +215,10 @@ create_user() {
 }
 
 export -f create_user
-export KEYCLOAK_BASE_URL REALM TOKEN ROLE_MAPPINGS PROGRESS_DIR
+export KEYCLOAK_BASE_URL REALM TOKEN ROLE_ATENDENTE ROLE_ADMIN PROGRESS_DIR
 
-seq 0 $((TOTAL - 1)) | xargs -P "$PARALLELISM" -I {} bash -c '
+TOTAL_USERS=$((TOTAL + TOTAL_ADMINS))
+seq 0 $((TOTAL_USERS - 1)) | xargs -P "$PARALLELISM" -I {} bash -c '
   user_json=$(jq -c ".[{}]" "'"$OUTPUT"'")
   create_user "{}" "$user_json"
 ' _
