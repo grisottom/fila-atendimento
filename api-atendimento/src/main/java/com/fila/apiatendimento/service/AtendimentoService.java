@@ -210,7 +210,8 @@ public class AtendimentoService {
      * Publica evento em todos os painéis associados ao serviço do atendimento.
      */
     private void publicarNosPaineisDoServico(FilaAtendimento fila, Estacao estacao, String status) {
-        List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(fila.getServicoId());
+        List<PainelServico> paineisServico = painelServicoRepository
+                .findByServicoIdAndPainelAgenciaId(fila.getServicoId(), fila.getAgenciaId());
         if (paineisServico.isEmpty()) {
             log.warn("Serviço {} sem painéis associados, evento {} não publicado para filaId={}",
                     fila.getServicoId(), status, fila.getId());

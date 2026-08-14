@@ -10,6 +10,8 @@ public interface PainelServicoRepository extends JpaRepository<PainelServico, In
 
     List<PainelServico> findByServicoId(String servicoId);
 
+    List<PainelServico> findByServicoIdAndPainelAgenciaId(String servicoId, String agenciaId);
+
     List<PainelServico> findByPainelId(Integer painelId);
 
     @Modifying
