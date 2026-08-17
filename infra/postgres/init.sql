@@ -21,6 +21,7 @@ CREATE TABLE painel (
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
     numero_painel INTEGER NOT NULL,
     localizacao VARCHAR(200),
+    ultimo_heartbeat TIMESTAMP,
     UNIQUE(agencia_id, numero_painel)
 );
 

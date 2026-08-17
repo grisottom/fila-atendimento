@@ -83,7 +83,16 @@ public class AtendimentoService {
 
         if (chamadaAtiva != null) {
             publicarNosPaineisDoServico(chamadaAtiva, estacao, "CHAMANDO");
-            return toResponse(chamadaAtiva, estacao.getNomeExibicao());
+            String aviso = null;
+            boolean painelAtivo = painelServicoRepository.existePainelAtivoParaServico(
+                    chamadaAtiva.getServicoId(), estacao.getAgenciaId(), LocalDateTime.now().minusMinutes(10));
+            if (!painelAtivo) {
+                aviso = "Nenhum painel ativo para o serviço '" + chamadaAtiva.getServicoId() + "' nesta agência";
+                log.warn("chamarProximo (chamadaAtiva): {}", aviso);
+            }
+            return new AtendimentoResponse(chamadaAtiva.getId(), chamadaAtiva.getSenha(), chamadaAtiva.getCpf(),
+                    chamadaAtiva.getNomePessoa(), chamadaAtiva.getServicoId(), chamadaAtiva.getStatus(),
+                    estacao.getNomeExibicao(), aviso);
         }
 
         // Consome a próxima mensagem da fila do broker com selector de permissões
@@ -130,7 +139,18 @@ public class AtendimentoService {
 
             publicarNosPaineisDoServico(proximo, estacao, "CHAMANDO");
 
-            return toResponse(proximo, estacao.getNomeExibicao());
+            // Verifica se há painel ativo para exibir a chamada
+            String aviso = null;
+            boolean painelAtivo = painelServicoRepository.existePainelAtivoParaServico(
+                    proximo.getServicoId(), estacao.getAgenciaId(), LocalDateTime.now().minusMinutes(10));
+            if (!painelAtivo) {
+                aviso = "Nenhum painel ativo para o serviço '" + proximo.getServicoId() + "' nesta agência";
+                log.warn("chamarProximo: {}", aviso);
+            }
+
+            return new AtendimentoResponse(proximo.getId(), proximo.getSenha(), proximo.getCpf(),
+                    proximo.getNomePessoa(), proximo.getServicoId(), proximo.getStatus(),
+                    estacao.getNomeExibicao(), aviso);
 
         } catch (Exception e) {
             log.warn("Erro no chamarProximo para filaId={}: {}. Resetando publicação.", filaId, e.getMessage());

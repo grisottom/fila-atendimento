@@ -33,6 +33,7 @@ export default function Atendimento() {
   const [atendimentoAtual, setAtendimentoAtual] = useState(null);
   const [msg, setMsg] = useState("");
   const [servicos, setServicos] = useState([]);
+  const [avisoPisca, setAvisoPisca] = useState(false);
 
   const btnIniciarRef = useRef(null);
 
@@ -54,6 +55,14 @@ export default function Atendimento() {
       carregarServicos();
     }
   }, [agenciaId]);
+
+  useEffect(() => {
+    if (atendimentoAtual?.aviso) {
+      setAvisoPisca(true);
+      const timer = setTimeout(() => setAvisoPisca(false), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [atendimentoAtual]);
 
   async function carregarAtivo() {
     try {
@@ -164,6 +173,21 @@ export default function Atendimento() {
       </div>
 
       {msg && <p style={{ color: "blue" }}>{msg}</p>}
+
+      {atendimentoAtual?.aviso && (
+        <p style={{
+          color: "#d32f2f",
+          fontWeight: "bold",
+          padding: "8px 12px",
+          backgroundColor: "#fff3e0",
+          borderLeft: "4px solid #ff9800",
+          borderRadius: 4,
+          opacity: avisoPisca ? 1 : 0.6,
+          transition: "opacity 0.3s ease"
+        }}>
+          ⚠ {atendimentoAtual.aviso}
+        </p>
+      )}
 
       <div style={{ display: "flex", gap: 24, marginTop: 16, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
