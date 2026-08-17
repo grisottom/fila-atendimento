@@ -24,4 +24,8 @@ logging:
     root: WARN
     com.fila.apipainel.service.PainelSseService: ERROR
     org.apache.catalina.connector.CoyoteOutputStream: OFF
+    org.apache.catalina.connector.CoyoteAdapter: OFF
+    org.apache.catalina.core: OFF
     org.apache.coyote.http11.Http11Processor: OFF
+    org.springframework.web.servlet.mvc.method.annotation.SseEmitter: OFF
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: OFF

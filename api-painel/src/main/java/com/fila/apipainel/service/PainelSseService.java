@@ -9,10 +9,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -32,6 +34,11 @@ public class PainelSseService {
         this.objectMapper = objectMapper;
     }
 
+    public Set<String> getPaineisConectados() {
+        return subscriptions.keySet();
+    }
+
+    @SuppressWarnings("null")
     public SseEmitter registrar(String agenciaId, Integer painelId) {
         String chave = agenciaId + ":" + painelId;
         String topico = "agencia." + agenciaId + ".painel." + painelId;
@@ -85,6 +92,9 @@ public class PainelSseService {
             replayRequest(agenciaId, painelId);
         }).start();
 
+        // 5. Notifica imediatamente que o painel está online
+        publicarHeartbeat(chave, true);
+
         log.info("Painel conectado via SSE: {}", chave);
 
         return emitter;
@@ -96,6 +106,32 @@ public class PainelSseService {
 
         jmsTemplate.send(topico, session -> session.createTextMessage(json));
         log.info("Mensagem publicada no tópico {}: {}", topico, json);
+    }
+
+    /**
+     * Heartbeat SSE: envia um comentário vazio a cada 30s para cada painel conectado.
+     * 
+     * O SSE é unidirecional (servidor → cliente). O Tomcat só detecta que o browser
+     * fechou quando tenta ESCREVER no socket e recebe "Broken pipe". Sem escrita
+     * periódica, uma conexão fechada pelo cliente fica "pendurada" em memória
+     * indefinidamente (o servidor não sabe que o client desconectou).
+     * 
+     * O comentário SSE (":ping") não gera evento no EventSource do browser — é
+     * invisível para a aplicação. Serve apenas para forçar uma tentativa de escrita
+     * no socket, permitindo ao Tomcat detectar a desconexão e acionar onError/onCompletion,
+     * que por sua vez executa o cleanup e publica o heartbeat offline.
+     */
+    @Scheduled(fixedDelay = 15_000)
+    public void enviarPingSse() {
+        for (Map.Entry<String, PainelSubscription> entry : subscriptions.entrySet()) {
+            try {
+                entry.getValue().emitter().send(SseEmitter.event().comment("ping"));
+            } catch (Exception e) {
+                // Escrita falhou → cliente desconectou → executa cleanup diretamente
+                log.debug("Ping falhou para {} (cliente desconectou): {}", entry.getKey(), e.getMessage());
+                cleanup(entry.getKey());
+            }
+        }
     }
 
     private void cleanup(String chave) {
@@ -112,7 +148,27 @@ public class PainelSseService {
             } catch (Exception ignored) {
                 // emitter já pode ter completado por conta própria
             }
+            // Notifica imediatamente que o painel está offline
+            publicarHeartbeat(chave, false);
             log.info("Painel desconectado: {}", chave);
+        }
+    }
+
+    private void publicarHeartbeat(String chave, boolean online) {
+        try {
+            String[] partes = chave.split(":");
+            String agenciaId = partes[0];
+            int painelId = Integer.parseInt(partes[1]);
+            String json = objectMapper.writeValueAsString(Map.of(
+                    "agenciaId", agenciaId,
+                    "painelId", painelId,
+                    "online", online
+            ));
+            JmsTemplate filaTemplate = new JmsTemplate(connectionFactory);
+            filaTemplate.setPubSubDomain(false);
+            filaTemplate.send("painel-heartbeat", session -> session.createTextMessage(json));
+        } catch (Exception e) {
+            log.warn("Erro ao publicar heartbeat offline para {}: {}", chave, e.getMessage());
         }
     }
 

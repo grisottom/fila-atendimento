@@ -17,7 +17,17 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
 
   useEffect(() => {
     conectarSSE();
+
+    // Renova o token a cada 10 min para manter a sessão do Keycloak ativa
+    // (evita expiração do refresh token por SSO Session Idle de 30 min)
+    const refreshInterval = setInterval(() => {
+      keycloak.updateToken(300).catch(() => {
+        keycloak.logout();
+      });
+    }, 10 * 60 * 1000);
+
     return () => {
+      clearInterval(refreshInterval);
       if (eventSourceRef.current) eventSourceRef.current.close();
     };
   }, []);

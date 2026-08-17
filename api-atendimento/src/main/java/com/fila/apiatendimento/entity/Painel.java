@@ -1,6 +1,7 @@
 package com.fila.apiatendimento.entity;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "painel")
@@ -16,6 +17,9 @@ public class Painel {
     private Integer numeroPainel;
     private String localizacao;
 
+    @Column(name = "ultimo_heartbeat")
+    private LocalDateTime ultimoHeartbeat;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getAgenciaId() { return agenciaId; }
@@ -24,4 +28,6 @@ public class Painel {
     public void setNumeroPainel(Integer numeroPainel) { this.numeroPainel = numeroPainel; }
     public String getLocalizacao() { return localizacao; }
     public void setLocalizacao(String localizacao) { this.localizacao = localizacao; }
+    public LocalDateTime getUltimoHeartbeat() { return ultimoHeartbeat; }
+    public void setUltimoHeartbeat(LocalDateTime ultimoHeartbeat) { this.ultimoHeartbeat = ultimoHeartbeat; }
 }

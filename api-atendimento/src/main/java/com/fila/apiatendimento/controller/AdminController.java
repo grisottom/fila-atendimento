@@ -91,6 +91,7 @@ public class AdminController {
     }
 
     @GetMapping("/atendentes/{agenciaId}")
+    @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> listarAtendentes(@PathVariable String agenciaId) {
         List<Atendente> todos = atendenteRepository.findByAgenciaId(agenciaId);
         List<Map<String, Object>> resultado = todos.stream()
