@@ -4,133 +4,176 @@ Os atendimentos seguem a ordem de agendamento e a ordem de chegada de pessoas na
 
 Cada pessoa que chega numa agência para ser atendido passa por uma triagem, depois da triagem a pessoa é chamada por um painel e se dirige para uma estação (mesa ou guichê) para ser atendido.
 
-O ideal a pessoa tenha agendamento feito e chegue antes do horário, a pessoa com agendamento feito tem prioridade para ser atendida em relação à quem chega sem horário agendado no atendimento chamado de expontâneo. 
-A ordem de atendimento dos espontâneos segue a ordem de chegada dos espontâneos
+O ideal a pessoa tenha agendamento feito e chegue antes do horário, a pessoa com agendamento feito tem prioridade para ser atendida em relação à quem chega sem horário agendado no atendimento chamado de espontâneo. 
+A ordem de atendimento dos espontâneos segue a ordem de chegada dos espontâneos.
 
-Os atendentes ficam em estações (mesas ou guichês) e chamam o próximo da fila através de um painel. É no funcionamento desse painel que quero me concentrar. Um painel atende várias estações, portanto a mensagem que será vista pela pessoa indica a estação de atendimento (ex: Mesa 3, Guichê 1). 
+Os atendentes ficam em estações (mesas ou guichês) e chamam o próximo da fila através de um painel. A mensagem que será vista pela pessoa indica a estação de atendimento (ex: Mesa 3, Guichê 1). 
 
-O atendimento, seja agendado ou expontâneo, é sempre para um serviço especifico, o que significa que tanto no agendamento quanto no atendimento expontâneo a pessoa precisa informar o serviço procurado.
+O painel está associado a serviços (não à estação). Quando um atendente chama o próximo, o sistema identifica o serviço do atendimento e publica o evento em todos os painéis associados àquele serviço. Caso o serviço não esteja associado a nenhum painel, o chamado não ocorre e uma mensagem de erro é retornada.
 
-O acesso dos usuários será controlado e gerido pelo keycloak, os tipos de usuário são 
+O atendimento, seja agendado ou espontâneo, é sempre para um serviço específico, o que significa que tanto no agendamento quanto no atendimento espontâneo a pessoa precisa informar o serviço procurado.
 
-- ger
-- atend
+# Controle de Acesso
 
-Um atributo do usuário é a agência onde ele trabalha
+O acesso dos usuários será controlado e gerido pelo Keycloak. Do Keycloak vêm os papéis (roles):
 
-À qualquer horário do dia o ger da agência alterar pode alterar as permissões dos usuários da agência.
+- admin (para o gerente da agência)
+- atendente (para os demais usuários)
 
-O ger terá permissão
+Um atributo do usuário no Keycloak é a agência onde ele trabalha. Esse atributo é mapeado no token JWT via protocol mapper, e tanto o frontend quanto o backend obtêm a agência do usuário diretamente do token. Os campos de agência nas telas são preenchidos automaticamente e são somente-leitura.
 
-- admin
+## Permissões de atendimento (banco de dados)
 
-Os atendentes terão permissões, também gerido por keycloak
+As permissões de atendimento (basica, normal, especial) são gerenciadas no banco de dados, nas tabelas `atendente` e `permissoes_atendente`. Não vêm do Keycloak.
 
+A qualquer horário do dia o gerente (admin) da agência pode alterar as permissões dos atendentes via API REST.
+
+Os atendentes têm capacidades distintas e são treinados para um subconjunto de serviços. A relação atendente vs serviços se dá através da permissão exigida para o serviço e a permissão que o atendente possui no banco.
+
+Permissões possíveis:
 - basica
 - normal
 - especial
 
-Os usuários pré cadastrados nos servicos na agencia agencia-01, no banco de dados
-- ger, pemissão admin
-- atend-triagem, permissão basica,
-- atend-triagem-2, permissão basica,
-- atend-normal, permissão normal
-- atend-especial, permissão especial
-- atend-all, permissões basica, normal e especial
-- atend-all-2, permissões basica, normal e especial
+## Usuários pré-configurados (agencia-01)
+
+| Usuário          | Role Keycloak | Permissões (banco)              |
+|------------------|---------------|---------------------------------|
+| ger              | admin         | (todas, implícito)              |
+| atend-triagem    | atendente     | basica                          |
+| atend-triagem-2  | atendente     | basica                          |
+| atend-normal     | atendente     | normal                          |
+| atend-especial   | atendente     | especial                        |
+| atend-all        | atendente     | basica, normal, especial        |
+| atend-all-2      | atendente     | basica, normal, especial        |
 
 A senha para logar de todos os usuários é pwd
 
-Os atendentes tem capacidades distintas e são treinados para um subonjunto de serviços, 
-A relação atendente vs serviços se dá através da permissão exigida para o serviço e a permissão que o usuário possui. 
+## Serviços e permissões exigidas
 
-Os serviços e as permissões exigidas:
-- serviço-basico, permissão basica
-- serviço-normal-01, pemisssão normal
-- serviço-normal-02, permissão normal
-- servico-especial-01, permissão especial
+| Serviço            | Permissão exigida |
+|--------------------|-------------------|
+| servico-basico     | basica            |
+| servico-normal-01  | normal            |
+| servico-normal-02  | normal            |
+| servico-especial-01| especial          |
 
-Quero criar 2 aplicações, 
-- Painel e
+# Aplicações
+
+Quero criar 2 aplicações:
+- Painel
 - Atendimento
 
-# Aplicacao React chamada Painel é uma página standalone, ativada somente para quem tem papel Admin, 
+# Aplicação React chamada Painel — página standalone, ativada somente para quem tem papel admin
 
 ## Tela de configuração 
-- captura a agencia do usuário Admin
+- A agência vem do token do usuário (somente-leitura)
 - informa o número do painel para ativação
 
 ## Tela de chamadas
 
-Mostra os atendimentos em curso, senha e estação
-
+Mostra os atendimentos em curso, senha e estação:
 - chamando 
 - em atendimento
 - ausente (a pessoa chamada mas não apareceu na estação)
 
-# A aplicação Painel tem uma API backend em Spring-Boot chamada API-Painel, 
+# A aplicação Painel tem uma API backend em Spring-Boot chamada API-Painel
 
-À princípio a API-Painel não faz persistência de dados em Banco. 
+A princípio a API-Painel não faz persistência de dados em Banco. 
 
-Métodos
+Métodos:
 - Controller SSE (Server Side Event), conforme especificado abaixo
 - Interação com Message Queue Broker 
 
-A ideia é que Painel + API sejam 'plugáveis' e precisaremos criar uma interface padronizada, 
+A ideia é que Painel + API sejam 'plugáveis' e precisaremos criar uma interface padronizada.
 
-# Aplicacao React chamada Atendimento para papeis Atendente e Admin
+# Aplicação React chamada Atendimento — para papéis atendente e admin
 
 ## Tela de configuração para Admin
-- cadastro de agência
-- cadastra paineis na Agencia do usuário Admin, informa localizacão (ex. térreo)
-- cadastra estações na Agencia do usuário Admin, informa tipo (MESA ou GUICHE), número e localização (ex. fundos, ex. 2o andar) e indica paineis para a estação, minimo 1
+- A agência vem do token do usuário (somente-leitura)
+- cadastra painéis na agência, informa localização (ex. térreo)
+- cadastra estações na agência, informa tipo (MESA, GUICHE ou SALA), número e localização
+- associa serviços a painéis (tabela paineis_servicos)
+- gestão de permissões de atendentes (tabela atendente + permissoes_atendente)
 
 ## Tela de triagem, feita por atendente com permissão basica ou pelo Admin
+- A agência vem do token do usuário (somente-leitura)
 - recepção da pessoa na Agência, por CPF
-- obtem o agendamento da pessoa, se existir
-- gera senha aleatória, 5 caracteres ASCII, sem acento, MAIUSCULAS e NUMEROS, e insere na tabela fila de atendimentos, senha, CPF, nome, horário agendado (se existir)
+- obtém o agendamento da pessoa, se existir
+- gera senha aleatória, 5 caracteres ASCII, sem acento, MAIÚSCULAS e NÚMEROS
+- insere na tabela fila_atendimento: senha, CPF, nome, horário agendado (se existir)
+- publica mensagem na queue JMS agencia.<id>.fila
 
 ## Tela de Atendimento, para atendente e Admin
-- indica a agência e em que 'estação' o atendente está realizando o atendimento
-- chama o próximo 
+- A agência vem do token do usuário (somente-leitura)
+- indica em que 'estação' o atendente está realizando o atendimento
+- chama o próximo (consome da queue JMS, verifica painéis do serviço, atualiza tabela, publica nos tópicos)
 - ausenta o próximo (não apareceu na estação, vai pro fim da fila)
 - inicia o atendimento 
 - finaliza o atendimento
+- cancela o atendimento
 
 # A aplicação Atendimento tem uma API backend em Spring-Boot, chamada API-Atendimento
 
-A comunicação entre a aplicação de Atendimento e o Painel ocorrerá de forma assíncrona através de um broker ActiveMQ Artemis:
+A comunicação entre a aplicação de Atendimento e o Painel ocorrerá de forma assíncrona através de um broker ActiveMQ Artemis.
 
-Aplicacao Painel vs API-Painel vs Broker
+## Aplicação Painel vs API-Painel vs Broker
 
-Objetivo receber as mensagens destinadas a um painel
+Objetivo: receber as mensagens destinadas a um painel.
 
-- A aplicacao Painel cliente se conecta via SSE a uma das instâncias da API-Painel
-- A API-Painel cria em tempo de execução um Subscription temporário (não durável) apontando para o endereço do tópico dinâmico (ex: agencia.42.painel.7)
-- O Artemis cria uma fila interna temporária atrelada a esse endereço: enderecoTopico = "agencia." + idAgencia + ".painel." + idPainel;
-- A API Painel expõe metodo para publicar Atualização, metodo com parâmetros  idAgencia, idPainel, Payload
-- Quando uma mensagem é publicada naquele endereço, o Artemis entrega apenas para a instância Java onde o Painel cliente está pendurado. Quando o cliente desconecta, o Artemis destrói tudo automaticamente.
+- A aplicação Painel cliente se conecta via SSE a uma das instâncias da API-Painel
+- A API-Painel cria em tempo de execução um Subscription temporário (não durável) apontando para o endereço do tópico JMS dinâmico (ex: agencia.42.painel.7)
+- O Artemis cria uma fila interna temporária atrelada a esse endereço
+- Quando uma mensagem é publicada naquele tópico JMS, o Artemis entrega apenas para a instância Java onde o Painel cliente está pendurado
+- Quando o cliente desconecta, o Artemis destrói tudo automaticamente
 
-Aplicacao Atendimento
-- a aplicação do Atendimento chama uma API Atendimento para obter o próximo atendimento da agencia, informando a 'estação' no chamado
-- a API Atendimento obtém os 'paineis' associados à 'estação' do chamado, caso não exista retorna erro
-- a API Atendimento chama uma função que obtém o próximo atendimento para a Agência (usar controle de concorrência no registro). Obs, fazer um join com os serviços atendidos pelo atendente para selecionar o próximo
-- a API Atendimento, para cada painel, entrega o Payload do atendimento para API do Painel de Atualizacao que publica no Artemis (chamada REST)
-- A API Atendimento marca registro como 'chamado'
+## Aplicação Atendimento — fluxo chamar próximo
 
-O banco de dados será Postgres e preciso que as tabelas de Agendamentos estejam pré-carregadas para testes, tanto para agencia-01 quanto agencia-02, com dados de pessoas aleatórias indexados por CPF (Numérico Long) e de agendamentos, em serviços da lista acima. 
+- O atendente chama a API Atendimento para obter o próximo, informando a estação
+- A API Atendimento consome a próxima mensagem da queue JMS (agencia.<id>.fila) com selector de permissões do atendente (buscadas no banco, tabela permissoes_atendente)
+- A API Atendimento busca o registro na tabela fila_atendimento pelo filaAtendimentoId da mensagem
+- A API Atendimento busca os painéis associados ao serviço do atendimento (tabela paineis_servicos). Se não existir nenhum painel, retorna erro
+- A API Atendimento atualiza o registro na tabela fila_atendimento: status → CHAMANDO
+- Para cada painel associado ao serviço, publica o evento no tópico JMS (agencia.<id>.painel.<n>)
 
-Todos os modulos serão desenvolvidos em imagens Docker e integrados em Docker-Compose para posteriormente adaptá-los para K8s
+# Modelo de dados
+
+O banco de dados será Postgres.
+
+Tabelas:
+- agencia (id, nome)
+- servico (id, nome, permissao_exigida)
+- painel (id, agencia_id, numero_painel, localizacao)
+- estacao (id, agencia_id, tipo_estacao, numero_estacao, localizacao)
+- paineis_servicos (id, painel_id, servico_id) — N:N entre painéis e serviços
+- atendente (id, username, agencia_id)
+- permissoes_atendente (id, atendente_id, permissao)
+- pessoa (cpf, nome)
+- agendamento (id, cpf, agencia_id, servico_id, data_hora)
+- fila_atendimento (id, agencia_id, cpf, nome_pessoa, servico_id, senha, status, estacao_id, atendente_username, horarios, posicao_fila, publicado_no_broker, version)
+
+As tabelas de Agendamentos e Pessoas devem estar pré-carregadas para testes, tanto para agencia-01 quanto agencia-02, com dados de pessoas aleatórias indexados por CPF (Numérico Long).
+
+Todos os módulos serão desenvolvidos em imagens Docker e integrados em Docker-Compose para posteriormente adaptá-los para K8s.
 
 # Replay de estado ao reconectar o Painel
 
 Quando o Painel (re)conecta via SSE, ele precisa recuperar os atendimentos ativos (CHAMANDO, EM_ATENDIMENTO) que já estavam em curso.
 
 Fluxo:
-- Ao registrar a conexão SSE, a API-Painel publica uma mensagem {agenciaId, painelId} no tópico "replay-request" do Artemis
-- A API-Atendimento escuta o tópico "replay-request"
-- Ao receber, consulta o banco por atendimentos ativos da agência cujas estações estejam associadas ao painel solicitado
-- Republica cada atendimento ativo no tópico do painel via /api/internal/publicar
+- Ao registrar a conexão SSE, a API-Painel publica uma mensagem {agenciaId, painelId} na queue JMS "replay-request"
+- A API-Atendimento escuta a queue "replay-request" (ReplayListener)
+- Ao receber, consulta a tabela fila_atendimento por atendimentos ativos da agência
+- Filtra os atendimentos cujo serviço esteja associado ao painel solicitado (via tabela paineis_servicos)
+- Republica cada atendimento ativo no tópico JMS do painel (agencia.<id>.painel.<n>)
 - O SSE já está escutando e entrega os eventos ao browser, sem loop
 
-Quero ir desenvolvendo, e verificando o funcionamento de cada módulo
+# Outbox Pattern
+
+Garantia de que toda inserção na tabela fila_atendimento gere uma mensagem correspondente na queue JMS:
+- Coluna publicado_no_broker (boolean) na tabela fila_atendimento
+- OutboxPublisher (scheduler ~5s) busca registros com publicado_no_broker=false e status=AGUARDANDO, publica na queue JMS e marca como true
+- Em caso de erro no chamarProximo (mensagem já consumida da queue + rollback no banco), reseta publicado_no_broker=false para republição
+- Idempotência: mensagens duplicadas na queue são descartadas se o registro na tabela já não está AGUARDANDO
+
+Quero ir desenvolvendo, e verificando o funcionamento de cada módulo.
