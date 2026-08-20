@@ -149,7 +149,7 @@ if [ "$HAS_AGENCIA" -eq 0 ]; then
     "permissions": {"view": ["admin", "user"], "edit": ["admin"]},
     "validations": {"length": {"max": 50}}
   }]')
-  curl -s -o /dev/null -w "" \
+  curl -s -o /dev/null -w "\n%{http_code}" \
     -X PUT "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/profile" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
