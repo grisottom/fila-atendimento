@@ -109,7 +109,7 @@ public class PainelSseService {
     }
 
     /**
-     * Heartbeat SSE: envia um comentário vazio a cada 30s para cada painel conectado.
+     * Heartbeat SSE: envia um comentário vazio a cada 15s para cada painel conectado.
      * 
      * O SSE é unidirecional (servidor → cliente). O Tomcat só detecta que o browser
      * fechou quando tenta ESCREVER no socket e recebe "Broken pipe". Sem escrita
