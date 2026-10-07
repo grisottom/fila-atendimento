@@ -86,10 +86,14 @@ public class TriagemService {
         fila.setHorarioChegada(LocalDateTime.now());
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(posicao);
-        fila.setPublicadoNoBroker(true);
+        // Outbox transacional: nasce como não publicado. A flag só vira true após
+        // uma publicação confirmada — seja pelo publish inline abaixo (otimização
+        // de latência no caminho feliz), seja pelo OutboxPublisher (rede de
+        // segurança que republica tudo que ficou com a flag false).
+        fila.setPublicadoNoBroker(false);
         filaRepository.save(fila);
 
-        // Publica na fila do broker (best effort; outbox republica se falhar)
+        // Publica na fila do broker (best effort; outbox publica/confirma depois)
         try {
             String servicoId = request.servicoId();
             String permissao = servicoId != null
@@ -104,10 +108,14 @@ public class TriagemService {
             //     publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
             // }
             publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
-        } catch (Exception e) {
-            log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
-            fila.setPublicadoNoBroker(false);
+
+            // Confirma a publicação só APÓS sucesso (padrão outbox). Se a transação
+            // sofrer rollback adiante, este save reverte junto (mesma transação).
+            fila.setPublicadoNoBroker(true);
             filaRepository.save(fila);
+        } catch (Exception e) {
+            // Flag permanece false; o OutboxPublisher republica no próximo ciclo.
+            log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
         }
 
         if (agendamento != null) {

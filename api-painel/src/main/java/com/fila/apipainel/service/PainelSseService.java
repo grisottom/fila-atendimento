@@ -1,8 +1,8 @@
 package com.fila.apipainel.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fila.apipainel.dto.PainelUpdateDTO;
 import jakarta.jms.ConnectionFactory;
+import jakarta.jms.DeliveryMode;
 import jakarta.jms.MessageListener;
 import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
@@ -22,14 +22,12 @@ public class PainelSseService {
 
     private static final Logger log = LoggerFactory.getLogger(PainelSseService.class);
 
-    private final JmsTemplate jmsTemplate;
     private final ConnectionFactory connectionFactory;
     private final ObjectMapper objectMapper;
 
     private final Map<String, PainelSubscription> subscriptions = new ConcurrentHashMap<>();
 
-    public PainelSseService(JmsTemplate jmsTemplate, ConnectionFactory connectionFactory, ObjectMapper objectMapper) {
-        this.jmsTemplate = jmsTemplate;
+    public PainelSseService(ConnectionFactory connectionFactory, ObjectMapper objectMapper) {
         this.connectionFactory = connectionFactory;
         this.objectMapper = objectMapper;
     }
@@ -100,16 +98,8 @@ public class PainelSseService {
         return emitter;
     }
 
-    public void publicar(PainelUpdateDTO update) throws Exception {
-        String topico = "agencia." + update.agenciaId() + ".painel." + update.painelId();
-        String json = objectMapper.writeValueAsString(update);
-
-        jmsTemplate.send(topico, session -> session.createTextMessage(json));
-        log.info("Mensagem publicada no tópico {}: {}", topico, json);
-    }
-
     /**
-     * Heartbeat SSE: envia um comentário vazio a cada 15s para cada painel conectado.
+     * Ping SSE: envia um comentário vazio a cada 15s para cada painel conectado.
      * 
      * O SSE é unidirecional (servidor → cliente). O Tomcat só detecta que o browser
      * fechou quando tenta ESCREVER no socket e recebe "Broken pipe". Sem escrita
@@ -119,7 +109,8 @@ public class PainelSseService {
      * O comentário SSE (":ping") não gera evento no EventSource do browser — é
      * invisível para a aplicação. Serve apenas para forçar uma tentativa de escrita
      * no socket, permitindo ao Tomcat detectar a desconexão e acionar onError/onCompletion,
-     * que por sua vez executa o cleanup e publica o heartbeat offline.
+     * que por sua vez executa o cleanup e atualiza o status do painel para Offline
+     * através da fila  painel-heartbeat (mensagem do Painel -> Atendimento).
      */
     @Scheduled(fixedDelay = 15_000)
     public void enviarPingSse() {
@@ -166,6 +157,9 @@ public class PainelSseService {
             ));
             JmsTemplate filaTemplate = new JmsTemplate(connectionFactory);
             filaTemplate.setPubSubDomain(false);
+            // Heartbeat é sinal de liveness descartável — não precisa ser persistido pelo broker.
+            filaTemplate.setExplicitQosEnabled(true);
+            filaTemplate.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
             filaTemplate.send("painel-heartbeat", session -> session.createTextMessage(json));
         } catch (Exception e) {
             log.warn("Erro ao publicar heartbeat offline para {}: {}", chave, e.getMessage());

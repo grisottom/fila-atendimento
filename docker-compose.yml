@@ -91,7 +91,6 @@ services:
       SPRING_ARTEMIS_PASSWORD: artemis123
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8080/realms/fila-atendimento
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
-      APP_INTERNAL_API_KEY: chave-interna-fila-2024
     depends_on:
       artemis:
         condition: service_healthy
@@ -124,8 +123,6 @@ services:
       SPRING_ARTEMIS_PASSWORD: artemis123
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8080/realms/fila-atendimento
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
-      APP_API_PAINEL_URL: http://api-painel:8081
-      APP_INTERNAL_API_KEY: chave-interna-fila-2024
     depends_on:
       postgres:
         condition: service_healthy
