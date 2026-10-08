@@ -56,6 +56,7 @@ CREATE TABLE agendamento (
 
 CREATE TABLE fila_atendimento (
     id SERIAL PRIMARY KEY,
+    triagem_uuid UUID NOT NULL UNIQUE,
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
     cpf BIGINT NOT NULL REFERENCES pessoa(cpf),
     nome_pessoa VARCHAR(200) NOT NULL,

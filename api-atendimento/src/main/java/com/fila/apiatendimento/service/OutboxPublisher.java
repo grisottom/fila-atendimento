@@ -79,7 +79,7 @@ public class OutboxPublisher {
 
                 triagemService.publicarNaQueueAgencia(
                         fila.getAgenciaId(),
-                        fila.getId(),
+                        fila.getTriagemUuid(),
                         servico.getPermissaoExigida(),
                         fila.getHorarioAgendado() != null
                 );

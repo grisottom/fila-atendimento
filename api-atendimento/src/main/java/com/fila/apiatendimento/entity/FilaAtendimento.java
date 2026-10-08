@@ -10,6 +10,12 @@ public class FilaAtendimento {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
+    // Identificador de correlação gerado na aplicação ANTES do insert. É o que
+    // viaja na mensagem do broker, permitindo publicar e persistir numa única
+    // escrita (a PK técnica continua sendo gerada pelo banco via IDENTITY).
+    @Column(name = "triagem_uuid", nullable = false, unique = true, updatable = false)
+    private java.util.UUID triagemUuid;
+
     @Column(name = "agencia_id")
     private String agenciaId;
 
@@ -57,6 +63,8 @@ public class FilaAtendimento {
 
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
+    public java.util.UUID getTriagemUuid() { return triagemUuid; }
+    public void setTriagemUuid(java.util.UUID triagemUuid) { this.triagemUuid = triagemUuid; }
     public String getAgenciaId() { return agenciaId; }
     public void setAgenciaId(String agenciaId) { this.agenciaId = agenciaId; }
     public Long getCpf() { return cpf; }

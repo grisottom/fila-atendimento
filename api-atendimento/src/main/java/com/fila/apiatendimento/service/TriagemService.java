@@ -86,14 +86,17 @@ public class TriagemService {
         fila.setHorarioChegada(LocalDateTime.now());
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(posicao);
-        // Outbox transacional: nasce como não publicado. A flag só vira true após
-        // uma publicação confirmada — seja pelo publish inline abaixo (otimização
-        // de latência no caminho feliz), seja pelo OutboxPublisher (rede de
-        // segurança que republica tudo que ficou com a flag false).
-        fila.setPublicadoNoBroker(false);
-        filaRepository.save(fila);
 
-        // Publica na fila do broker (best effort; outbox publica/confirma depois)
+        // UUID de correlação gerado AQUI, antes do insert. É ele que viaja na
+        // mensagem do broker, então não dependemos da PK (IDENTITY) para publicar.
+        java.util.UUID triagemUuid = java.util.UUID.randomUUID();
+        fila.setTriagemUuid(triagemUuid);
+
+        // Outbox transacional com UMA única escrita: publicamos primeiro (o UUID já
+        // existe em memória) e definimos a flag conforme o resultado. O save único
+        // ao final persiste o estado final — não há insert seguido de update.
+        //   - publish OK    -> publicadoNoBroker=true  (caminho feliz)
+        //   - publish falha -> publicadoNoBroker=false; o OutboxPublisher republica.
         try {
             String servicoId = request.servicoId();
             String permissao = servicoId != null
@@ -102,21 +105,20 @@ public class TriagemService {
 
             // FAULT INJECTION: simula falha ao publicar no broker no 1º item
             // if (faultCountTriagem.incrementAndGet() <= 1) {
-            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para filaId={}", faultCountTriagem.get(), fila.getId());
+            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para triagemUuid={}", faultCountTriagem.get(), triagemUuid);
             //     throw new RuntimeException("[FAULT] Falha ao publicar no broker");
             // } else {
-            //     publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
+            //     publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
             // }
-            publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
-
-            // Confirma a publicação só APÓS sucesso (padrão outbox). Se a transação
-            // sofrer rollback adiante, este save reverte junto (mesma transação).
+            publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
             fila.setPublicadoNoBroker(true);
-            filaRepository.save(fila);
         } catch (Exception e) {
-            // Flag permanece false; o OutboxPublisher republica no próximo ciclo.
+            fila.setPublicadoNoBroker(false);
             log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
         }
+
+        // Única persistência: grava a linha já com o estado final da flag.
+        filaRepository.save(fila);
 
         if (agendamento != null) {
             agendamentoRepository.delete(agendamento);
@@ -126,22 +128,23 @@ public class TriagemService {
                 agendamento != null ? agendamento.getDataHora() : null);
     }
 
-    void publicarNaQueueAgencia(String agenciaId, Integer filaAtendimentoId,
+    void publicarNaQueueAgencia(String agenciaId, java.util.UUID triagemUuid,
                                             String permissao, boolean agendado) {
         String queueAgencia = "agencia." + agenciaId + ".fila";
         int prioridade = agendado ? 9 : 4;
+        String uuidStr = triagemUuid.toString();
 
         jmsQueueTemplate.send(queueAgencia, session -> {
-            Message message = session.createTextMessage(String.valueOf(filaAtendimentoId));
-            message.setIntProperty("filaAtendimentoId", filaAtendimentoId);
+            Message message = session.createTextMessage(uuidStr);
+            message.setStringProperty("triagemUuid", uuidStr);
             message.setStringProperty("permissao", permissao);
             message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);
             message.setJMSPriority(prioridade);
             return message;
         });
 
-        log.info("Publicado na fila {}: filaAtendimentoId={}, permissao={}, prioridade={}",
-                queueAgencia, filaAtendimentoId, permissao, prioridade);
+        log.info("Publicado na fila {}: triagemUuid={}, permissao={}, prioridade={}",
+                queueAgencia, uuidStr, permissao, prioridade);
     }
 
     private String gerarSenha() {

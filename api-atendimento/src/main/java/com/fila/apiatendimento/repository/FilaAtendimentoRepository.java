@@ -43,4 +43,6 @@ public interface FilaAtendimentoRepository extends JpaRepository<FilaAtendimento
         @Param("permissoes") List<String> permissoes);
 
     List<FilaAtendimento> findByPublicadoNoBrokerFalseAndStatus(String status);
+
+    Optional<FilaAtendimento> findByTriagemUuid(java.util.UUID triagemUuid);
 }

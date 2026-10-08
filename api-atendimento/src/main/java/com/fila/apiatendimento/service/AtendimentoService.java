@@ -95,6 +95,14 @@ public class AtendimentoService {
                     estacao.getNomeExibicao(), aviso);
         }
 
+        // Sem permissões não há nada a consumir: evita montar um selector inválido
+        // ("permissao IN ()") que o broker rejeita com AMQ229020.
+        if (permissoes == null || permissoes.isEmpty()) {
+            log.warn("Atendente sem permissões: agencia={}, estacao={}, username={}",
+                    estacao.getAgenciaId(), estacaoId, username);
+            throw new RuntimeException("Nenhum atendimento na fila");
+        }
+
         // Consome a próxima mensagem da fila do broker com selector de permissões
         String queueAgencia = "agencia." + estacao.getAgenciaId() + ".fila";
         String selector = "permissao IN (" +
@@ -110,11 +118,14 @@ public class AtendimentoService {
 
         Integer filaId = null;
         try {
-            filaId = message.getIntProperty("filaAtendimentoId");
-            final Integer id = filaId;
+            String triagemUuidStr = message.getStringProperty("triagemUuid");
+            final java.util.UUID triagemUuid = java.util.UUID.fromString(triagemUuidStr);
 
-            FilaAtendimento proximo = filaAtendimentoRepository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Atendimento não encontrado no banco: " + id));
+            FilaAtendimento proximo = filaAtendimentoRepository.findByTriagemUuid(triagemUuid)
+                    .orElseThrow(() -> new RuntimeException("Atendimento não encontrado no banco: triagemUuid=" + triagemUuid));
+
+            // PK técnica, usada no restante do fluxo (reset do outbox, logs, resposta).
+            filaId = proximo.getId();
 
             // Idempotência: descarta mensagens duplicadas
             if (!"AGUARDANDO".equals(proximo.getStatus())) {
@@ -126,7 +137,7 @@ public class AtendimentoService {
             List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(proximo.getServicoId());
             if (paineisServico.isEmpty()) {
                 // Reseta para o outbox republicar (devolve à fila)
-                outboxPublisher.resetarPublicacao(id);
+                outboxPublisher.resetarPublicacao(filaId);
                 throw new RuntimeException("Serviço '" + proximo.getServicoId() + "' não está associado a nenhum painel");
             }
 
