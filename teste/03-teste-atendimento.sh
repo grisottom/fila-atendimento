@@ -159,6 +159,19 @@ processar_agencia() {
         break
       fi
 
+      # CASO "MENSAGEM SEM LINHA" (órfã): o backend consome a mensagem do broker mas
+      # não achou a FilaAtendimento correspondente e responde 200 com status
+      # NAO_ENCONTRADO (sem id). Normalmente é transitório: a triagem publicou e o
+      # OutboxPublisher ainda vai reconciliar a partir do banco. Pausamos 1s e
+      # tentamos de novo (até RETRIES<15 => ~15s de janela, acima do ciclo do outbox
+      # de 3-7s), em vez de contar como sucesso (id nulo) ou falha dura.
+      local STATUS_RESP=$(echo "$BODY" | jq -r '.status // empty')
+      if [ "$STATUS_RESP" == "NAO_ENCONTRADO" ]; then
+        RETRIES=$((RETRIES + 1))
+        sleep 1
+        continue
+      fi
+
       local ID_FILA=$(echo "$BODY" | jq -r '.id')
       echo "$ID_FILA" >> "$IDS_FILE"
 

@@ -186,14 +186,17 @@ Fluxo para teste de carga:
 # 1. Sobe o ambiente
 docker compose up -d --build
 
+# derrubar tudo e subir do zero, comleto
+#docker compose down && docker compose up -d
+
 # 2. Cria usuários de teste no Keycloak + banco (idempotente)
 ./teste/01-setup-usuarios-keycloak.sh
 
 # 3. Abre painéis SSE (em outro terminal)
-./teste/03-teste-painel-sse.sh
+./teste/02-teste-painel-sse.sh
 
 # 4. Executa fluxo completo
-./teste/02-teste-atendimento.sh
+./teste/03-teste-atendimento.sh
 ```
 
 ---
