@@ -48,4 +48,14 @@ public class TriagemController {
     public ResponseEntity<List<AtendimentoResponse>> atendimentosDoDiaEsperando(@PathVariable String agenciaId) {
         return ResponseEntity.ok(triagemService.listarAtendimentosDoDiaEsperando(agenciaId));
     }
+
+    /**
+     * Republica manualmente um atendimento AGUARDANDO na fila do broker.
+     * Rede de segurança para o caso de a mensagem ter se perdido no broker.
+     */
+    @PostMapping("/republicar/{id}")
+    public ResponseEntity<Map<String, String>> republicar(@PathVariable Integer id) {
+        triagemService.republicar(id);
+        return ResponseEntity.ok(Map.of("mensagem", "Atendimento republicado na fila"));
+    }
 }

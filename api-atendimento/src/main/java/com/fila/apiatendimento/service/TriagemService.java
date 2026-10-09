@@ -35,7 +35,7 @@ public class TriagemService {
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     // FAULT INJECTION: contador para falhar nos 3 primeiros itens
-    // private static final java.util.concurrent.atomic.AtomicInteger faultCountTriagem = new java.util.concurrent.atomic.AtomicInteger(0);
+    private static final java.util.concurrent.atomic.AtomicInteger faultCountTriagem = new java.util.concurrent.atomic.AtomicInteger(0);
 
     private final PessoaRepository pessoaRepository;
     private final AgendamentoRepository agendamentoRepository;
@@ -103,7 +103,7 @@ public class TriagemService {
                     ? servicoRepository.findById(servicoId).map(s -> s.getPermissaoExigida()).orElse("basica")
                     : "basica";
 
-            // FAULT INJECTION: simula falha ao publicar no broker no 1º item
+            // FAULT INJECTION (publish): desativada — simulava falha ao publicar no broker.
             // if (faultCountTriagem.incrementAndGet() <= 1) {
             //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para triagemUuid={}", faultCountTriagem.get(), triagemUuid);
             //     throw new RuntimeException("[FAULT] Falha ao publicar no broker");
@@ -124,8 +124,49 @@ public class TriagemService {
             agendamentoRepository.delete(agendamento);
         }
 
+        // FAULT INJECTION (commit): desativada. Simulava o cenário de falha de commit
+        // após o publish. O teste empírico mostrou que, com sessionTransacted=true no
+        // jmsQueueTemplate, a sessão JMS é sincronizada com a transação e sofre rollback
+        // junto — ou seja, NÃO gera mensagem órfã (publish e persistência caem juntos).
+        // if (faultCountTriagem.incrementAndGet() <= 2) {
+        //     log.warn("[FAULT] Simulando falha de COMMIT (item #{}) para triagemUuid={} — publish já feito, forçando rollback",
+        //             faultCountTriagem.get(), triagemUuid);
+        //     throw new RuntimeException("[FAULT] Falha de commit simulada (mensagem órfã no broker)");
+        // }
+
         return new TriagemResponse(senha, nomePessoa, request.servicoId(),
                 agendamento != null ? agendamento.getDataHora() : null);
+    }
+
+    /**
+     * Republica manualmente um atendimento AGUARDANDO na fila do broker.
+     *
+     * Rede de segurança operacional: se a mensagem de um atendimento se perdeu no
+     * broker (ex.: reinício do broker sem armazenamento persistente), a linha
+     * permanece AGUARDANDO no banco mas não há mensagem na fila para o atendente
+     * consumir. Esta ação, acionada pelo triador, recoloca a mensagem na fila.
+     *
+     * NÃO altera o status nem qualquer outro dado — apenas republica. Se a mensagem
+     * ainda estiver viva na fila (uso indevido), o chamarProximo é idempotente:
+     * ao consumir a duplicata, verá o status já diferente de AGUARDANDO e a descarta.
+     */
+    @Transactional(readOnly = true)
+    public void republicar(Integer id) {
+        FilaAtendimento fila = filaRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Atendimento não encontrado: " + id));
+
+        if (!"AGUARDANDO".equals(fila.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Só é possível republicar atendimentos AGUARDANDO (status atual: " + fila.getStatus() + ")");
+        }
+
+        String permissao = fila.getServicoId() != null
+                ? servicoRepository.findById(fila.getServicoId()).map(s -> s.getPermissaoExigida()).orElse("basica")
+                : "basica";
+
+        publicarNaQueueAgencia(fila.getAgenciaId(), fila.getTriagemUuid(), permissao, fila.getHorarioAgendado() != null);
+        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {}",
+                fila.getId(), fila.getTriagemUuid(), fila.getAgenciaId());
     }
 
     void publicarNaQueueAgencia(String agenciaId, java.util.UUID triagemUuid,
@@ -172,7 +213,7 @@ public class TriagemService {
         return filaRepository.findByAgenciaIdAndStatusIn(agenciaId, List.of("AGUARDANDO", "CANCELADO", "AUSENTE"))
                 .stream()
                 .map(f -> new AtendimentoResponse(f.getId(), f.getSenha(), f.getCpf(), f.getNomePessoa(),
-                        f.getServicoId(), f.getStatus(), null))
+                        f.getServicoId(), f.getStatus(), null, null, f.getHorarioChegada()))
                 .toList();
     }
 

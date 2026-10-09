@@ -121,16 +121,43 @@ public class AtendimentoService {
             String triagemUuidStr = message.getStringProperty("triagemUuid");
             final java.util.UUID triagemUuid = java.util.UUID.fromString(triagemUuidStr);
 
-            FilaAtendimento proximo = filaAtendimentoRepository.findByTriagemUuid(triagemUuid)
-                    .orElseThrow(() -> new RuntimeException("Atendimento não encontrado no banco: triagemUuid=" + triagemUuid));
+            // CASO "MENSAGEM SEM LINHA" (órfã): a mensagem existe no broker mas não há
+            // FilaAtendimento correspondente. Duas origens possíveis:
+            //   a) transitório: a triagem publicou e o OutboxPublisher ainda vai gravar/
+            //      reconciliar (ou o commit da triagem está em curso) — basta aguardar;
+            //   b) permanente: a transação da triagem sofreu rollback APÓS o publish
+            //      (publish antes do commit), então a linha nunca existirá.
+            //
+            // Tratamos SEM lançar exceção, para (1) NÃO mascarar a causa no catch genérico
+            // ("Erro ao processar mensagem da fila") e (2) NÃO devolver a mensagem à fila
+            // em rollback — o que, no caso (b), viraria uma "mensagem-veneno" em loop.
+            // A mensagem é consumida (descartada) e devolvemos um aviso DISTINTO para que
+            // o chamador aguarde e tente de novo; se for o caso (a), o outbox republica a
+            // partir do banco e a próxima tentativa encontra o item.
+            FilaAtendimento proximo = filaAtendimentoRepository.findByTriagemUuid(triagemUuid).orElse(null);
+            if (proximo == null) {
+                log.warn("Mensagem sem linha no banco (triagemUuid={}): descartando e sinalizando indisponibilidade temporária", triagemUuid);
+                return new AtendimentoResponse(null, null, null, null, null, "NAO_ENCONTRADO", null,
+                        "Atendimento ainda não disponível no banco. Aguarde e tente novamente.");
+            }
 
             // PK técnica, usada no restante do fluxo (reset do outbox, logs, resposta).
             filaId = proximo.getId();
 
-            // Idempotência: descarta mensagens duplicadas
+            // Idempotência: mensagem reentregue para um item que já saiu do estado
+            // AGUARDANDO (já chamado/atendido/ausente/finalizado/cancelado).
+            //
+            // Em vez de recorrer internamente para "pegar a próxima" (recursão que
+            // acumulava consumos na mesma transação/sessão JMS e não tinha teto),
+            // confirmamos o consumo desta duplicata — SEM rollback: o return normal
+            // sai limpo do try, não aciona o catch nem o resetarPublicacao, então a
+            // mensagem NÃO volta para a fila (é descartada no commit) — e devolvemos
+            // ao atendente um aviso significativo do estado real para que ele clique
+            // em "chamar próximo" novamente, avançando para a mensagem seguinte.
             if (!"AGUARDANDO".equals(proximo.getStatus())) {
                 log.info("Mensagem reentregue para filaId={} com status={}, descartando", filaId, proximo.getStatus());
-                return chamarProximo(estacaoId, username, permissoes);
+                String aviso = mensagemReentregue(proximo.getSenha(), proximo.getStatus());
+                return new AtendimentoResponse(null, null, null, null, null, proximo.getStatus(), null, aviso);
             }
 
             // Verifica se o serviço está associado a pelo menos um painel
@@ -164,11 +191,17 @@ public class AtendimentoService {
                     estacao.getNomeExibicao(), aviso);
 
         } catch (Exception e) {
-            log.warn("Erro no chamarProximo para filaId={}: {}. Resetando publicação.", filaId, e.getMessage());
+            // Preserva a mensagem da causa para não "achatar" situações distintas num
+            // texto genérico. O caso órfã (sem linha) já é tratado acima sem exceção;
+            // aqui caem falhas reais de processamento (ex.: erro ao salvar, serializar,
+            // publicar no painel). Devolver a mensagem original ajuda a diagnosticar.
+            log.warn("Erro no chamarProximo para filaId={}: {}", filaId, e.getMessage());
             if (filaId != null) {
                 outboxPublisher.resetarPublicacao(filaId);
+                log.warn("Resetando publicação do filaId={} para o outbox republicar", filaId);
             }
-            throw new RuntimeException("Erro ao processar mensagem da fila", e);
+            String causa = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            throw new RuntimeException("Erro ao processar atendimento: " + causa, e);
         }
     }
 
@@ -269,6 +302,25 @@ public class AtendimentoService {
             }
             jmsTemplate.send(topico, session -> session.createTextMessage(json));
         }
+    }
+
+    /**
+     * Monta um aviso significativo quando uma mensagem reentregue aponta para um
+     * item que já não está mais AGUARDANDO. A mensagem reflete o estado real do
+     * item e orienta o atendente a tentar novamente, já que o retry agora é humano
+     * (não há mais recursão interna drenando a fila automaticamente).
+     */
+    private String mensagemReentregue(String senha, String status) {
+        String ref = senha != null ? "A senha " + senha : "A chamada anterior";
+        String base = switch (status) {
+            case "CHAMANDO" -> ref + " já está sendo chamada por outra estação.";
+            case "EM_ATENDIMENTO" -> ref + " já está em atendimento.";
+            case "AUSENTE" -> ref + " foi marcada como ausente.";
+            case "FINALIZADO" -> ref + " já foi finalizada.";
+            case "CANCELADO" -> ref + " foi cancelada.";
+            default -> ref + " não está mais aguardando (status atual: " + status + ").";
+        };
+        return base + " Clique em chamar próximo novamente.";
     }
 
     private AtendimentoResponse toResponse(FilaAtendimento fila, String estacaoNome) {

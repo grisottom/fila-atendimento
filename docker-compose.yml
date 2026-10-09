@@ -3,7 +3,7 @@ version: "3.9"
 services:
 
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6.1
     container_name: fila-traefik
     ports:
       - "3000:3000"   # Painel

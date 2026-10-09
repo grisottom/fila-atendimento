@@ -43,6 +43,8 @@ export default function Triagem() {
   const [atendimentoId, setAtendimentoId] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [erro, setErro] = useState("");
+  const [msgSucesso, setMsgSucesso] = useState("");
+  const [republicandoId, setRepublicandoId] = useState(null);
   const [agendamentos, setAgendamentos] = useState([]);
   const [agendPagina, setAgendPagina] = useState(0);
   const [agendTotalPaginas, setAgendTotalPaginas] = useState(0);
@@ -124,6 +126,20 @@ export default function Triagem() {
     }
   }
 
+  async function republicar(a) {
+    setErro(""); setMsgSucesso("");
+    setRepublicandoId(a.id);
+    try {
+      await api.post(`/api/triagem/republicar/${a.id}`);
+      setMsgSucesso(`Senha ${a.senha} republicada na fila de atendimento.`);
+      mutarEsperando();
+    } catch (err) {
+      setErro(err.message);
+    } finally {
+      setRepublicandoId(null);
+    }
+  }
+
   function imprimir() {
     window.print();
   }
@@ -182,6 +198,7 @@ export default function Triagem() {
       </form>
 
       {erro && <p style={{ color: "red" }}>{erro}</p>}
+      {msgSucesso && <p style={{ color: "green" }}>{msgSucesso}</p>}
 
       <dialog ref={dialogRef}>
         {resultado && (
@@ -212,6 +229,8 @@ export default function Triagem() {
                 <th style={{ padding: "6px 10px" }}>Nome</th>
                 <th style={{ padding: "6px 10px" }}>Serviço</th>
                 <th style={{ padding: "6px 10px" }}>Status</th>
+                <th style={{ padding: "6px 10px" }}>Chegada</th>
+                <th style={{ padding: "6px 10px" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -225,6 +244,27 @@ export default function Triagem() {
                   <td style={{ padding: "6px 10px" }}>{a.nomePessoa}</td>
                   <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === a.servicoId)?.nome || a.servicoId}</td>
                   <td style={{ padding: "6px 10px", color: a.status === "AUSENTE" ? "orange" : "inherit" }}>{a.status}</td>
+                  <td style={{ padding: "6px 10px" }}>{a.horarioChegada ? new Date(a.horarioChegada).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td style={{ padding: "6px 10px" }}>
+                    {a.status === "AGUARDANDO" && (
+                      <button
+                        type="button"
+                        onClick={() => republicar(a)}
+                        disabled={republicandoId === a.id}
+                        title="Republicar, use em caso da triagem não aparecer no atendimento"
+                        style={{
+                          padding: "4px 12px",
+                          border: "1px solid #1976d2",
+                          borderRadius: 4,
+                          background: republicandoId === a.id ? "#90caf9" : "#1976d2",
+                          color: "#fff",
+                          cursor: republicandoId === a.id ? "default" : "pointer",
+                        }}
+                      >
+                        {republicandoId === a.id ? "Republicando..." : "Republicar"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
