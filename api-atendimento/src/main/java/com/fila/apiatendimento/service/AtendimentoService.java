@@ -13,6 +13,7 @@ import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.PainelServicoRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
 import jakarta.jms.Message;
+import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -319,7 +320,17 @@ public class AtendimentoService {
             } catch (Exception e) {
                 throw new RuntimeException("Erro ao serializar mensagem para o broker", e);
             }
-            jmsTemplate.send(topico, session -> session.createTextMessage(json));
+            String agenciaId = fila.getAgenciaId();
+            int painelId = painel.getNumeroPainel();
+            // Headers de roteamento: permitem ao listener compartilhado da api-painel
+            // identificar o painel de destino sem desserializar o corpo. Adicionar
+            // propriedades é retrocompatível (consumidores atuais as ignoram).
+            jmsTemplate.send(topico, session -> {
+                TextMessage m = session.createTextMessage(json);
+                m.setStringProperty("agenciaId", agenciaId);
+                m.setIntProperty("painelId", painelId);
+                return m;
+            });
         }
     }
 

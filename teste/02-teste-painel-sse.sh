@@ -34,54 +34,50 @@ token_valido() {
   [ $((EXP - 300)) -gt $AGORA ]
 }
 
-# Verifica se tokens existentes ainda são válidos
-REUSAR_TOKENS=true
-PRIMEIRO_ARQUIVO="$TOKEN_DIR/agencia-0001"
-if [ -f "$PRIMEIRO_ARQUIVO" ]; then
-  PRIMEIRO_TOKEN=$(cat "$PRIMEIRO_ARQUIVO" 2>/dev/null)
-  if token_valido "$PRIMEIRO_TOKEN"; then
-    # Testa contra a API para garantir que a chave do Keycloak não mudou
-    HTTP_TEST=$(curl -s -o /dev/null -w "%{http_code}" \
-      "$BASE_URL/api/painel/sse/agencia-0001/1?access_token=$PRIMEIRO_TOKEN" --max-time 2)
-    if [ "$HTTP_TEST" != "401" ] && [ "$HTTP_TEST" != "403" ] && [ "$HTTP_TEST" != "000" ]; then
-      REUSAR_TOKENS=true
+# Reuso POR TOKEN: a validação de expiração (token_valido) é local e barata, sem
+# chamar o Keycloak. Para cada agência, reaproveita o token em cache se ainda válido;
+# senão, obtém um novo. Evita o furo do "tudo ou nada" (que, com cache vazio,
+# reutilizava zero tokens) e dispensa limpar o cache manualmente.
+echo "Obtendo/reaproveitando tokens dos admins (1 por agência)..."
+
+TOKENS_OK=0
+TOKENS_FAIL=0
+TOKENS_REUSADOS=0
+for a in $(seq 1 $NUM_AGENCIAS); do
+  AGENCIA_ID=$(printf "agencia-%04d" "$a")
+  TOKEN_FILE="$TOKEN_DIR/$AGENCIA_ID"
+
+  # Reaproveita o token em cache se ainda válido.
+  if [ -f "$TOKEN_FILE" ]; then
+    CACHED=$(cat "$TOKEN_FILE" 2>/dev/null)
+    if token_valido "$CACHED"; then
+      TOKENS_OK=$((TOKENS_OK + 1))
+      TOKENS_REUSADOS=$((TOKENS_REUSADOS + 1))
+      continue
     fi
   fi
-fi
 
-if [ "$REUSAR_TOKENS" == "true" ]; then
-  TOKENS_OK=$(ls "$TOKEN_DIR"/agencia-* 2>/dev/null | wc -l)
-  echo "Tokens existentes ainda válidos, reutilizando ($TOKENS_OK tokens)."
-else
-  echo "Obtendo tokens dos admins (1 por agência)..."
+  USERNAME="admin-${AGENCIA_ID}"
+  TOKEN=$(curl -s -X POST "$KEYCLOAK_URL" \
+    -d "client_id=$CLIENT_ID" \
+    -d "grant_type=password" \
+    -d "username=$USERNAME" \
+    -d "password=$PASSWORD" | jq -r '.access_token')
 
-  TOKENS_OK=0
-  TOKENS_FAIL=0
-  for a in $(seq 1 $NUM_AGENCIAS); do
-    AGENCIA_ID=$(printf "agencia-%04d" "$a")
-    USERNAME="admin-${AGENCIA_ID}"
+  if [ "$TOKEN" != "null" ] && [ -n "$TOKEN" ]; then
+    echo "$TOKEN" > "$TOKEN_FILE"
+    TOKENS_OK=$((TOKENS_OK + 1))
+  else
+    TOKENS_FAIL=$((TOKENS_FAIL + 1))
+  fi
 
-    TOKEN=$(curl -s -X POST "$KEYCLOAK_URL" \
-      -d "client_id=$CLIENT_ID" \
-      -d "grant_type=password" \
-      -d "username=$USERNAME" \
-      -d "password=$PASSWORD" | jq -r '.access_token')
+  if [ $((a % 50)) -eq 0 ]; then
+    printf "\r       Progresso: %d/%d tokens" "$a" "$NUM_AGENCIAS"
+  fi
+done
 
-    if [ "$TOKEN" != "null" ] && [ -n "$TOKEN" ]; then
-      echo "$TOKEN" > "$TOKEN_DIR/$AGENCIA_ID"
-      TOKENS_OK=$((TOKENS_OK + 1))
-    else
-      TOKENS_FAIL=$((TOKENS_FAIL + 1))
-    fi
-
-    if [ $((a % 50)) -eq 0 ]; then
-      printf "\r       Progresso: %d/%d tokens" "$a" "$NUM_AGENCIAS"
-    fi
-  done
-
-  echo ""
-  echo "       Tokens obtidos: $TOKENS_OK | Falhas: $TOKENS_FAIL"
-fi
+echo ""
+echo "       Tokens: $TOKENS_OK ok ($TOKENS_REUSADOS reaproveitados) | Falhas: $TOKENS_FAIL"
 
 if [ "$TOKENS_OK" -eq 0 ]; then
   echo "ERRO: Nenhum token obtido. Verifique se os admins foram criados (01-setup-usuarios-keycloak.sh)."
