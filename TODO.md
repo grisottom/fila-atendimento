@@ -24,14 +24,14 @@
 
 **Objetivo:** Trocar o modelo "1 container por painel" por **poucos consumidores compartilhados usando wildcard de tópico do Artemis** e rotear a mensagem internamente para o `SseEmitter` correto.
 
-**Abordagem:**
-- [ ] Usar wildcard de endereço do Artemis (ex.: `agencia.#` ou `agencia.*.painel.*`) num único (ou poucos) listener(s) compartilhado(s), em vez de um container por painel.
-- [ ] Extrair o destino real da mensagem (ou de um header) para descobrir a chave `agenciaId:painelId` e localizar o `SseEmitter` no `Map` de subscriptions.
-- [ ] Manter o `Map<String, SseEmitter>` de conexões SSE ativas, mas **desacoplado** do container JMS (que passa a ser compartilhado, não por painel).
-- [ ] Ajustar o `cleanup` para remover apenas o emitter do painel, sem parar/destruir container (o container agora é global).
-- [ ] Revalidar o mecanismo de replay: o replay-request continua igual, mas o evento republicado chega pelo listener compartilhado.
+**Abordagem:** ✅ Concluído.
+- [x] Wildcard `agencia.*.painel.*` num **único** `DefaultMessageListenerContainer` compartilhado, criado no `@PostConstruct` do `PainelSseService` (não mais por painel).
+- [x] Roteamento por **header JMS** (`agenciaId`/`painelId`): os publicadores (`AtendimentoService.publicarNosPaineisDoServico` e `ReplayListener`) passaram a incluir esses headers (retrocompatível). Validado em teste (725 OK / 0 divergências) antes de adotar.
+- [x] `Map<String, SseEmitter>` desacoplado do JMS (o `PainelSubscription` com container por painel foi removido).
+- [x] `cleanup` remove apenas o emitter; o container é global (encerrado só no `@PreDestroy`).
+- [x] Replay revalidado: `replay-request` inalterado; o evento republicado chega pelo listener compartilhado (também com headers).
 
-**Ganho esperado:** derruba drasticamente threads e conexões JMS ao broker; api-painel cabe em menos réplicas e menos memória; Artemis lida com muito menos conexões/subscriptions.
+**Ganho obtido:** conexões/subscriptions ao broker caíram de ~N (nº de painéis) para **1**. Testado com `teste/02-teste-painel-sse.sh` (120 conexões) sem regressão funcional.
 
 ## Avaliar WebFlux/SSE reativo na api-painel (conexões de saída)
 
@@ -39,13 +39,15 @@
 
 **Contexto:** A api-painel roda sobre Tomcat (servlet/MVC), modelo **thread-por-conexão**. Cada conexão SSE aberta (~1.700) segura uma thread do pool do Tomcat mesmo ficando ociosa entre eventos. SSE é justamente isso: conexões de longa duração, quietas a maior parte do tempo.
 
-**Objetivo:** Avaliar migrar as conexões SSE de saída para **Spring WebFlux** (Netty + event loop), onde milhares de conexões ociosas são multiplexadas em poucas threads, reduzindo memória e contagem de threads.
+**Objetivo:** Reduzir o custo de ~N platform threads do Tomcat presas a conexões SSE ociosas.
 
-**Passos:**
-- [ ] Avaliar impacto (WebFlux muda o stack; a api-painel é pequena, então o custo de migração é contido).
-- [ ] Expor o endpoint SSE como `Flux<ServerSentEvent<...>>` em vez de `SseEmitter`.
-- [ ] Combinar com o listener compartilhado do item anterior (a mensagem do broker vira um sink/`Sinks.Many` que o `Flux` de cada painel consome).
-- [ ] Teste de carga comparativo (Tomcat atual vs. WebFlux) com `teste/03-teste-painel-sse.sh` para medir memória/threads reais.
+**Resolvido com Virtual Threads (não WebFlux).** ✅
+- [x] Habilitado `spring.threads.virtual.enabled: true` no `application.yml` da api-painel (Spring Boot 3.3 + Java 21). Uma linha de config, mantendo o modelo servlet/`SseEmitter` atual.
+- [x] Validado: com **120 conexões SSE abertas**, o processo tinha **~56 threads de SO** (via `/proc/1/task`) — as conexões não prendem thread de SO, confirmando a multiplexação por virtual threads. Sem regressão funcional (eventos chegando normalmente).
+- [x] **WebFlux descartado** por ora: virtual threads entregam o mesmo ganho no lado SSE com esforço mínimo e sem migrar para o stack reativo. Reavaliar só se houver outra razão para adotar WebFlux.
+- [ ] (Opcional, dimensionamento K8s) Teste comparativo com flag vs. sem flag sob carga alta (1.000+ conexões) para fixar `requests/limits`.
+
+> Nota: virtual threads NÃO reduzem conexões/subscriptions ao broker — isso foi resolvido pelo listener compartilhado (item anterior). As duas mudanças são complementares.
 
 ---
 

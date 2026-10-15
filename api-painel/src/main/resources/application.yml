@@ -2,6 +2,13 @@ server:
   port: 8081
 
 spring:
+  # Virtual threads (Java 21 + Spring Boot 3.2+): cada conexão SSE de longa duração
+  # deixa de prender uma platform thread do Tomcat enquanto está ociosa — a virtual
+  # thread é desmontada do carrier durante o I/O. Resolve o custo de ~N threads
+  # presas a conexões SSE quietas, sem migrar para o modelo reativo (WebFlux).
+  threads:
+    virtual:
+      enabled: true
   artemis:
     broker-url: tcp://localhost:61616
     user: artemis
