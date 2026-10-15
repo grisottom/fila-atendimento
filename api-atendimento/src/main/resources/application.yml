@@ -24,6 +24,20 @@ spring:
           issuer-uri: http://localhost:8080/realms/fila-atendimento
           jwk-set-uri: http://localhost:8080/realms/fila-atendimento/protocol/openid-connect/certs
 
+atendimento:
+  # Quando true (produção), o "chamar próximo" é recusado se não houver painel
+  # ATIVO (heartbeat recente) para o serviço — não faz sentido chamar sem onde
+  # exibir a senha; o item permanece AGUARDANDO. Quando false (ex.: testes de
+  # carga sem painel conectado), a chamada prossegue e apenas registra um aviso.
+  # Sobrescrevível por env: ATENDIMENTO_EXIGIR_PAINEL_ATIVO=false
+  exigir-painel-ativo: true
+  # Nome da fila de dead-letter no broker (broker.xml: dead-letter-address=DLQ).
+  dlq-nome: DLQ
+  # Teto de reprocessamentos de um item a partir da DLQ antes de virar FALHA_DLQ.
+  # Avaliado contra o contador PERSISTENTE no item (tentativas_dlq), pois o
+  # JMSXDeliveryCount do broker reseta a cada ciclo de DLQ.
+  dlq-max-reprocessos: 2
+
 logging:
   level:
     root: WARN

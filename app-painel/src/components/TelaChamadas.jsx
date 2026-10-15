@@ -46,7 +46,12 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
 
     es.onerror = () => {
       es.close();
-      setTimeout(conectarSSE, 3000);
+      // Jitter na reconexão: evita o "thundering herd" quando muitos painéis caem
+      // juntos (ex.: reinício de pods). Em vez de todos reabrirem no mesmo instante,
+      // cada um aguarda um atraso aleatório, espalhando a rajada de replay-requests
+      // no tempo. Base curta (1s) + componente aleatório de até 9s → janela de 1-10s.
+      const delay = 1000 + Math.floor(Math.random() * 9000);
+      setTimeout(conectarSSE, delay);
     };
   }
 

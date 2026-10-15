@@ -1,8 +1,10 @@
 node_modules/
 target/
+dist/
 .env
 *.class
 *.jar
+*.js
 
 # Arquivos gerados para teste de carga
 infra/keycloak/realm-export-teste.json

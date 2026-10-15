@@ -32,7 +32,7 @@ public class JmsConfig {
         JmsTemplate template = new JmsTemplate(connectionFactory);
         template.setPubSubDomain(false);
         template.setSessionTransacted(true);
-        template.setReceiveTimeout(2000); // 2 segundos — retorna null se não houver mensagem
+        template.setReceiveTimeout(1000); // 1s: retorna null se não houver mensagem (balanceia latência de resposta x retenção de conexão)
         return template;
     }
 }

@@ -101,7 +101,14 @@ public class ReplayListener {
                         "estacao", estacaoNome,
                         "status", fila.getStatus()
                 ));
-                jmsTemplate.send(topico, session -> session.createTextMessage(json));
+                // Headers de roteamento para o listener compartilhado da api-painel
+                // (retrocompatível: consumidores atuais ignoram as propriedades).
+                jmsTemplate.send(topico, session -> {
+                    TextMessage m = session.createTextMessage(json);
+                    m.setStringProperty("agenciaId", agenciaId);
+                    m.setIntProperty("painelId", painelId);
+                    return m;
+                });
                 publicados++;
             } catch (Exception e) {
                 log.error("Erro ao republicar atendimento {} no painel {}: {}", fila.getId(), painelId, e.getMessage());

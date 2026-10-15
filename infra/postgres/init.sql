@@ -56,6 +56,7 @@ CREATE TABLE agendamento (
 
 CREATE TABLE fila_atendimento (
     id SERIAL PRIMARY KEY,
+    triagem_uuid UUID NOT NULL UNIQUE,
     agencia_id VARCHAR(50) NOT NULL REFERENCES agencia(id),
     cpf BIGINT NOT NULL REFERENCES pessoa(cpf),
     nome_pessoa VARCHAR(200) NOT NULL,
@@ -71,6 +72,10 @@ CREATE TABLE fila_atendimento (
     horario_fim_atendimento TIMESTAMP,
     posicao_fila INTEGER NOT NULL DEFAULT 0,
     publicado_no_broker BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Contador anti-loop: nº de vezes que o item foi reprocessado a partir da DLQ.
+    -- Persiste no item porque o JMSXDeliveryCount do broker reseta a cada ciclo de
+    -- DLQ (comprovado em teste). Ao exceder o teto, o item vira FALHA_DLQ.
+    tentativas_dlq INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 0
 );
 

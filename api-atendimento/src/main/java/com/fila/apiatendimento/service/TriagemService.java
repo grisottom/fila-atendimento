@@ -35,7 +35,7 @@ public class TriagemService {
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     // FAULT INJECTION: contador para falhar nos 3 primeiros itens
-    // private static final java.util.concurrent.atomic.AtomicInteger faultCountTriagem = new java.util.concurrent.atomic.AtomicInteger(0);
+    private static final java.util.concurrent.atomic.AtomicInteger faultCountTriagem = new java.util.concurrent.atomic.AtomicInteger(0);
 
     private final PessoaRepository pessoaRepository;
     private final AgendamentoRepository agendamentoRepository;
@@ -86,54 +86,117 @@ public class TriagemService {
         fila.setHorarioChegada(LocalDateTime.now());
         fila.setStatus("AGUARDANDO");
         fila.setPosicaoFila(posicao);
-        fila.setPublicadoNoBroker(true);
-        filaRepository.save(fila);
 
-        // Publica na fila do broker (best effort; outbox republica se falhar)
+        // UUID de correlação gerado AQUI, antes do insert. É ele que viaja na
+        // mensagem do broker, então não dependemos da PK (IDENTITY) para publicar.
+        java.util.UUID triagemUuid = java.util.UUID.randomUUID();
+        fila.setTriagemUuid(triagemUuid);
+
+        // Outbox transacional com UMA única escrita: publicamos primeiro (o UUID já
+        // existe em memória) e definimos a flag conforme o resultado. O save único
+        // ao final persiste o estado final — não há insert seguido de update.
+        //   - publish OK    -> publicadoNoBroker=true  (caminho feliz)
+        //   - publish falha -> publicadoNoBroker=false; o OutboxPublisher republica.
         try {
             String servicoId = request.servicoId();
             String permissao = servicoId != null
                     ? servicoRepository.findById(servicoId).map(s -> s.getPermissaoExigida()).orElse("basica")
                     : "basica";
 
-            // FAULT INJECTION: simula falha ao publicar no broker no 1º item
+            // FAULT INJECTION (publish): desativada — simulava falha ao publicar no broker.
             // if (faultCountTriagem.incrementAndGet() <= 1) {
-            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para filaId={}", faultCountTriagem.get(), fila.getId());
+            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para triagemUuid={}", faultCountTriagem.get(), triagemUuid);
             //     throw new RuntimeException("[FAULT] Falha ao publicar no broker");
             // } else {
-            //     publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
+            //     publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
             // }
-            publicarNaQueueAgencia(request.agenciaId(), fila.getId(), permissao, agendamento != null);
+            publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
+            fila.setPublicadoNoBroker(true);
         } catch (Exception e) {
-            log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
             fila.setPublicadoNoBroker(false);
-            filaRepository.save(fila);
+            log.warn("Falha ao publicar no broker (outbox vai republicar): {}", e.getMessage());
         }
+
+        // Única persistência: grava a linha já com o estado final da flag.
+        filaRepository.save(fila);
 
         if (agendamento != null) {
             agendamentoRepository.delete(agendamento);
         }
 
+        // FAULT INJECTION (commit): desativada. Simulava o cenário de falha de commit
+        // após o publish. O teste empírico mostrou que, com sessionTransacted=true no
+        // jmsQueueTemplate, a sessão JMS é sincronizada com a transação e sofre rollback
+        // junto — ou seja, NÃO gera mensagem órfã (publish e persistência caem juntos).
+        // if (faultCountTriagem.incrementAndGet() <= 2) {
+        //     log.warn("[FAULT] Simulando falha de COMMIT (item #{}) para triagemUuid={} — publish já feito, forçando rollback",
+        //             faultCountTriagem.get(), triagemUuid);
+        //     throw new RuntimeException("[FAULT] Falha de commit simulada (mensagem órfã no broker)");
+        // }
+
         return new TriagemResponse(senha, nomePessoa, request.servicoId(),
                 agendamento != null ? agendamento.getDataHora() : null);
     }
 
-    void publicarNaQueueAgencia(String agenciaId, Integer filaAtendimentoId,
+    /**
+     * Republica manualmente um atendimento AGUARDANDO na fila do broker.
+     *
+     * Rede de segurança operacional: se a mensagem de um atendimento se perdeu no
+     * broker (ex.: reinício do broker sem armazenamento persistente), a linha
+     * permanece AGUARDANDO no banco mas não há mensagem na fila para o atendente
+     * consumir. Esta ação, acionada pelo triador, recoloca a mensagem na fila.
+     *
+     * NÃO altera o status nem qualquer outro dado — apenas republica. Se a mensagem
+     * ainda estiver viva na fila (uso indevido), o chamarProximo é idempotente:
+     * ao consumir a duplicata, verá o status já diferente de AGUARDANDO e a descarta.
+     */
+    @Transactional
+    public void republicar(Integer id) {
+        FilaAtendimento fila = filaRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Atendimento não encontrado: " + id));
+
+        // Aceita AGUARDANDO (rede de segurança comum) e FALHA_DLQ (item que esgotou
+        // as tentativas automáticas de reprocessamento): o "Republicar" é a
+        // intervenção humana que dá nova chance após a causa ter sido resolvida.
+        if (!"AGUARDANDO".equals(fila.getStatus()) && !DlqReprocessor.STATUS_FALHA_DLQ.equals(fila.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Só é possível republicar atendimentos AGUARDANDO ou " + DlqReprocessor.STATUS_FALHA_DLQ
+                            + " (status atual: " + fila.getStatus() + ")");
+        }
+
+        // Intervenção manual zera o contador anti-loop: o item ganha um ciclo de
+        // tentativas automáticas renovado. Também garante status AGUARDANDO para
+        // itens que vinham de FALHA_DLQ.
+        fila.setStatus("AGUARDANDO");
+        fila.setTentativasDlq(0);
+        filaRepository.save(fila);
+
+        String permissao = fila.getServicoId() != null
+                ? servicoRepository.findById(fila.getServicoId()).map(s -> s.getPermissaoExigida()).orElse("basica")
+                : "basica";
+
+        publicarNaQueueAgencia(fila.getAgenciaId(), fila.getTriagemUuid(), permissao, fila.getHorarioAgendado() != null);
+        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {} (tentativas_dlq zerado)",
+                fila.getId(), fila.getTriagemUuid(), fila.getAgenciaId());
+    }
+
+    void publicarNaQueueAgencia(String agenciaId, java.util.UUID triagemUuid,
                                             String permissao, boolean agendado) {
         String queueAgencia = "agencia." + agenciaId + ".fila";
         int prioridade = agendado ? 9 : 4;
+        String uuidStr = triagemUuid.toString();
 
         jmsQueueTemplate.send(queueAgencia, session -> {
-            Message message = session.createTextMessage(String.valueOf(filaAtendimentoId));
-            message.setIntProperty("filaAtendimentoId", filaAtendimentoId);
+            Message message = session.createTextMessage(uuidStr);
+            message.setStringProperty("triagemUuid", uuidStr);
             message.setStringProperty("permissao", permissao);
             message.setJMSDeliveryMode(DeliveryMode.PERSISTENT);
             message.setJMSPriority(prioridade);
             return message;
         });
 
-        log.info("Publicado na fila {}: filaAtendimentoId={}, permissao={}, prioridade={}",
-                queueAgencia, filaAtendimentoId, permissao, prioridade);
+        log.info("Publicado na fila {}: triagemUuid={}, permissao={}, prioridade={}",
+                queueAgencia, uuidStr, permissao, prioridade);
     }
 
     private String gerarSenha() {
@@ -158,10 +221,11 @@ public class TriagemService {
     }
 
     public List<AtendimentoResponse> listarAtendimentosDoDiaEsperando(String agenciaId) {
-        return filaRepository.findByAgenciaIdAndStatusIn(agenciaId, List.of("AGUARDANDO", "CANCELADO", "AUSENTE"))
+        return filaRepository.findByAgenciaIdAndStatusIn(agenciaId,
+                        List.of("AGUARDANDO", "CANCELADO", "AUSENTE", DlqReprocessor.STATUS_FALHA_DLQ))
                 .stream()
                 .map(f -> new AtendimentoResponse(f.getId(), f.getSenha(), f.getCpf(), f.getNomePessoa(),
-                        f.getServicoId(), f.getStatus(), null))
+                        f.getServicoId(), f.getStatus(), null, null, f.getHorarioChegada()))
                 .toList();
     }
 

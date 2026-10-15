@@ -186,14 +186,17 @@ Fluxo para teste de carga:
 # 1. Sobe o ambiente
 docker compose up -d --build
 
+# derrubar tudo e subir do zero, comleto
+#docker compose down && docker compose up -d
+
 # 2. Cria usuários de teste no Keycloak + banco (idempotente)
 ./teste/01-setup-usuarios-keycloak.sh
 
 # 3. Abre painéis SSE (em outro terminal)
-./teste/03-teste-painel-sse.sh
+./teste/02-teste-painel-sse.sh
 
 # 4. Executa fluxo completo
-./teste/02-teste-atendimento.sh
+./teste/03-teste-atendimento.sh
 ```
 
 ---
@@ -450,6 +453,24 @@ Quando o browser do painel reconecta (refresh, queda de rede, reinício do servi
 ```
 
 O delay de 500ms é necessário porque a subscription no tópico JMS do Artemis é criada de forma assíncrona. Sem ele, o replay chegaria antes do subscriber estar pronto e a mensagem seria perdida.
+
+### Heartbeat dos painéis (liveness)
+
+A `api-atendimento` precisa saber quais painéis estão ativos para avisar o atendente, no momento da chamada, se o serviço não tem nenhum painel para exibir a senha. Esse liveness é mantido por heartbeats que a `api-painel` publica na queue JMS `painel-heartbeat`, consumidos pelo `HeartbeatListener` na `api-atendimento`, que atualiza a coluna `ultimo_heartbeat` do painel.
+
+Há três momentos de publicação:
+
+| Momento | Sinal | Origem |
+|---------|-------|--------|
+| Ao conectar o SSE | `online=true` | `PainelSseService.registrar` |
+| Ao desconectar | `online=false` | `PainelSseService.cleanup` |
+| Periódico (a cada 5 min) | `online=true` | `HeartbeatPublisher` |
+
+O **`HeartbeatPublisher`** envia `online=true` a cada 5 minutos para todos os painéis conectados. Seu papel é **renovar** o `ultimo_heartbeat` de conexões de longa duração (os painéis ficam abertos o dia todo): a `api-atendimento` considera um painel ativo apenas se o heartbeat for mais recente que **10 minutos** (`existePainelAtivoParaServico`). A folga entre publicar a cada 5 min e tolerar até 10 min permite perder um heartbeat (ex.: broker reiniciando) sem o painel "piscar" como inativo.
+
+É um sinal **tolerante a falhas e apenas informativo**: se a publicação falhar, apenas é logada e se recompõe no ciclo seguinte; e o `ultimo_heartbeat` só alimenta o aviso "nenhum painel ativo" ao chamar — **não bloqueia** o atendimento.
+
+> O **ping SSE** (`:ping` a cada 15s em `PainelSseService.enviarPingSse`) é um mecanismo com propósito próprio — forçar uma escrita no socket para o servidor detectar que o browser desconectou — mas está **ligado** ao liveness: quando o ping falha, dispara o `cleanup`, que publica `online=false` e faz o `HeartbeatListener` gravar `ultimo_heartbeat = null`. Ou seja, é o ping que, na prática, detecta a saída do painel e aciona a marcação de offline. O que o diferencia do `HeartbeatPublisher` é o papel: o ping detecta **desconexão** (evento), o publisher **renova** o liveness de quem segue conectado (periódico).
 
 ### Prioridade na queue JMS
 

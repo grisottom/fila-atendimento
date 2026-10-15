@@ -1,6 +1,7 @@
 package com.fila.apiatendimento.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fila.apiatendimento.config.NegocioException;
 import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.entity.Estacao;
 import com.fila.apiatendimento.entity.FilaAtendimento;
@@ -12,9 +13,11 @@ import com.fila.apiatendimento.repository.FilaAtendimentoRepository;
 import com.fila.apiatendimento.repository.PainelServicoRepository;
 import com.fila.apiatendimento.repository.ServicoRepository;
 import jakarta.jms.Message;
+import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
@@ -37,7 +40,11 @@ public class AtendimentoService {
     private final JmsTemplate jmsTemplate;
     private final JmsTemplate jmsQueueTemplate;
     private final ObjectMapper objectMapper;
-    private final OutboxPublisher outboxPublisher;
+
+    // Produção: true (recusa chamada sem painel ativo). Testes de carga sem painel
+    // conectado: setar ATENDIMENTO_EXIGIR_PAINEL_ATIVO=false para liberar o fluxo.
+    @Value("${atendimento.exigir-painel-ativo:true}")
+    private boolean exigirPainelAtivo;
 
     public AtendimentoService(FilaAtendimentoRepository filaRepository,
                               EstacaoRepository estacaoRepository,
@@ -45,8 +52,7 @@ public class AtendimentoService {
                               PainelServicoRepository painelServicoRepository,
                               JmsTemplate jmsTemplate,
                               @Qualifier("jmsQueueTemplate") JmsTemplate jmsQueueTemplate,
-                              ObjectMapper objectMapper,
-                              OutboxPublisher outboxPublisher) {
+                              ObjectMapper objectMapper) {
         this.filaAtendimentoRepository = filaRepository;
         this.estacaoRepository = estacaoRepository;
         this.servicoRepository = servicoRepository;
@@ -54,7 +60,6 @@ public class AtendimentoService {
         this.jmsTemplate = jmsTemplate;
         this.jmsQueueTemplate = jmsQueueTemplate;
         this.objectMapper = objectMapper;
-        this.outboxPublisher = outboxPublisher;
     }
 
     public AtendimentoResponse buscarAtivo(String username) {
@@ -95,6 +100,14 @@ public class AtendimentoService {
                     estacao.getNomeExibicao(), aviso);
         }
 
+        // Sem permissões não há nada a consumir: evita montar um selector inválido
+        // ("permissao IN ()") que o broker rejeita com AMQ229020.
+        if (permissoes == null || permissoes.isEmpty()) {
+            log.warn("Atendente sem permissões: agencia={}, estacao={}, username={}",
+                    estacao.getAgenciaId(), estacaoId, username);
+            throw new RuntimeException("Nenhum atendimento na fila");
+        }
+
         // Consome a próxima mensagem da fila do broker com selector de permissões
         String queueAgencia = "agencia." + estacao.getAgenciaId() + ".fila";
         String selector = "permissao IN (" +
@@ -110,24 +123,71 @@ public class AtendimentoService {
 
         Integer filaId = null;
         try {
-            filaId = message.getIntProperty("filaAtendimentoId");
-            final Integer id = filaId;
+            String triagemUuidStr = message.getStringProperty("triagemUuid");
+            final java.util.UUID triagemUuid = java.util.UUID.fromString(triagemUuidStr);
 
-            FilaAtendimento proximo = filaAtendimentoRepository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Atendimento não encontrado no banco: " + id));
-
-            // Idempotência: descarta mensagens duplicadas
-            if (!"AGUARDANDO".equals(proximo.getStatus())) {
-                log.info("Mensagem reentregue para filaId={} com status={}, descartando", filaId, proximo.getStatus());
-                return chamarProximo(estacaoId, username, permissoes);
+            // CASO "MENSAGEM SEM LINHA" (órfã): a mensagem existe no broker mas não há
+            // FilaAtendimento correspondente. Duas origens possíveis:
+            //   a) transitório: a triagem publicou e o OutboxPublisher ainda vai gravar/
+            //      reconciliar (ou o commit da triagem está em curso) — basta aguardar;
+            //   b) permanente: a transação da triagem sofreu rollback APÓS o publish
+            //      (publish antes do commit), então a linha nunca existirá.
+            //
+            // Tratamos SEM lançar exceção, para (1) NÃO mascarar a causa no catch genérico
+            // ("Erro ao processar mensagem da fila") e (2) NÃO devolver a mensagem à fila
+            // em rollback — o que, no caso (b), viraria uma "mensagem-veneno" em loop.
+            // A mensagem é consumida (descartada) e devolvemos um aviso DISTINTO para que
+            // o chamador aguarde e tente de novo; se for o caso (a), o outbox republica a
+            // partir do banco e a próxima tentativa encontra o item.
+            FilaAtendimento proximo = filaAtendimentoRepository.findByTriagemUuid(triagemUuid).orElse(null);
+            if (proximo == null) {
+                log.warn("Mensagem sem linha no banco (triagemUuid={}): descartando e sinalizando indisponibilidade temporária", triagemUuid);
+                return new AtendimentoResponse(null, null, null, null, null, "NAO_ENCONTRADO", null,
+                        "Atendimento ainda não disponível no banco. Aguarde e tente novamente.");
             }
 
-            // Verifica se o serviço está associado a pelo menos um painel
+            // PK técnica, usada no restante do fluxo (reset do outbox, logs, resposta).
+            filaId = proximo.getId();
+
+            // Idempotência: mensagem reentregue para um item que já saiu do estado
+            // AGUARDANDO (já chamado/atendido/ausente/finalizado/cancelado).
+            //
+            // Em vez de recorrer internamente para "pegar a próxima" (recursão que
+            // acumulava consumos na mesma transação/sessão JMS e não tinha teto),
+            // confirmamos o consumo desta duplicata — SEM rollback: o return normal
+            // sai limpo do try, não aciona o catch nem o resetarPublicacao, então a
+            // mensagem NÃO volta para a fila (é descartada no commit) — e devolvemos
+            // ao atendente um aviso significativo do estado real para que ele clique
+            // em "chamar próximo" novamente, avançando para a mensagem seguinte.
+            if (!"AGUARDANDO".equals(proximo.getStatus())) {
+                log.info("Mensagem reentregue para filaId={} com status={}, descartando", filaId, proximo.getStatus());
+                String aviso = mensagemReentregue(proximo.getSenha(), proximo.getStatus());
+                return new AtendimentoResponse(null, null, null, null, null, proximo.getStatus(), null, aviso);
+            }
+
+            // Verifica se o serviço está associado a pelo menos um painel.
+            // Sem associação é erro de configuração: recusa a chamada (NegocioException
+            // → 409) e devolve o item à fila via reset do outbox no catch.
             List<PainelServico> paineisServico = painelServicoRepository.findByServicoId(proximo.getServicoId());
             if (paineisServico.isEmpty()) {
-                // Reseta para o outbox republicar (devolve à fila)
-                outboxPublisher.resetarPublicacao(id);
-                throw new RuntimeException("Serviço '" + proximo.getServicoId() + "' não está associado a nenhum painel");
+                throw new NegocioException("Serviço '" + proximo.getServicoId() + "' não está associado a nenhum painel");
+            }
+
+            // Verifica se há painel ATIVO (com heartbeat recente) para exibir a chamada.
+            // Sem painel ativo não faz sentido chamar: a senha não apareceria em lugar
+            // nenhum. Com exigirPainelAtivo=true (produção), recusa a chamada e devolve
+            // o item à fila (permanece AGUARDANDO) para ser chamado quando um painel
+            // voltar. Com false (testes sem painel), apenas avisa e segue a chamada.
+            String aviso = null;
+            boolean painelAtivo = painelServicoRepository.existePainelAtivoParaServico(
+                    proximo.getServicoId(), estacao.getAgenciaId(), LocalDateTime.now().minusMinutes(10));
+            if (!painelAtivo) {
+                String msg = "Nenhum painel ativo para o serviço '" + proximo.getServicoId() + "' nesta agência";
+                if (exigirPainelAtivo) {
+                    throw new NegocioException(msg);
+                }
+                aviso = msg;
+                log.warn("chamarProximo (exigirPainelAtivo=false): {}", msg);
             }
 
             proximo.setStatus("CHAMANDO");
@@ -139,25 +199,29 @@ public class AtendimentoService {
 
             publicarNosPaineisDoServico(proximo, estacao, "CHAMANDO");
 
-            // Verifica se há painel ativo para exibir a chamada
-            String aviso = null;
-            boolean painelAtivo = painelServicoRepository.existePainelAtivoParaServico(
-                    proximo.getServicoId(), estacao.getAgenciaId(), LocalDateTime.now().minusMinutes(10));
-            if (!painelAtivo) {
-                aviso = "Nenhum painel ativo para o serviço '" + proximo.getServicoId() + "' nesta agência";
-                log.warn("chamarProximo: {}", aviso);
-            }
-
             return new AtendimentoResponse(proximo.getId(), proximo.getSenha(), proximo.getCpf(),
                     proximo.getNomePessoa(), proximo.getServicoId(), proximo.getStatus(),
                     estacao.getNomeExibicao(), aviso);
 
         } catch (Exception e) {
-            log.warn("Erro no chamarProximo para filaId={}: {}. Resetando publicação.", filaId, e.getMessage());
-            if (filaId != null) {
-                outboxPublisher.resetarPublicacao(filaId);
+            // NÃO reseta o outbox aqui: com jmsQueueTemplate em sessionTransacted=true,
+            // o rollback desta transação sincroniza o rollback da sessão JMS e a mensagem
+            // VOLTA sozinha para a fila (redelivery). O reset manual era redundante e
+            // causava mensagem duplicada (comprovado nos experimentos). O item permanece
+            // AGUARDANDO; se as tentativas se esgotarem, o broker move para a DLQ, tratada
+            // pelo DlqListener. O OutboxPublisher cobre o caso de falha de banco prolongada.
+            log.warn("chamarProximo interrompido para filaId={}: {}", filaId, e.getMessage());
+
+            // Condição de negócio esperada (ex.: sem painel ativo/associado): re-lança
+            // sem embrulhar, preservando a mensagem e o mapeamento para 409.
+            if (e instanceof NegocioException ne) {
+                throw ne;
             }
-            throw new RuntimeException("Erro ao processar mensagem da fila", e);
+
+            // Falha real de processamento (erro ao salvar, serializar, publicar no
+            // painel): preserva a causa para diagnóstico e devolve como erro interno.
+            String causa = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            throw new RuntimeException("Erro ao processar atendimento: " + causa, e);
         }
     }
 
@@ -256,8 +320,37 @@ public class AtendimentoService {
             } catch (Exception e) {
                 throw new RuntimeException("Erro ao serializar mensagem para o broker", e);
             }
-            jmsTemplate.send(topico, session -> session.createTextMessage(json));
+            String agenciaId = fila.getAgenciaId();
+            int painelId = painel.getNumeroPainel();
+            // Headers de roteamento: permitem ao listener compartilhado da api-painel
+            // identificar o painel de destino sem desserializar o corpo. Adicionar
+            // propriedades é retrocompatível (consumidores atuais as ignoram).
+            jmsTemplate.send(topico, session -> {
+                TextMessage m = session.createTextMessage(json);
+                m.setStringProperty("agenciaId", agenciaId);
+                m.setIntProperty("painelId", painelId);
+                return m;
+            });
         }
+    }
+
+    /**
+     * Monta um aviso significativo quando uma mensagem reentregue aponta para um
+     * item que já não está mais AGUARDANDO. A mensagem reflete o estado real do
+     * item e orienta o atendente a tentar novamente, já que o retry agora é humano
+     * (não há mais recursão interna drenando a fila automaticamente).
+     */
+    private String mensagemReentregue(String senha, String status) {
+        String ref = senha != null ? "A senha " + senha : "A chamada anterior";
+        String base = switch (status) {
+            case "CHAMANDO" -> ref + " já está sendo chamada por outra estação.";
+            case "EM_ATENDIMENTO" -> ref + " já está em atendimento.";
+            case "AUSENTE" -> ref + " foi marcada como ausente.";
+            case "FINALIZADO" -> ref + " já foi finalizada.";
+            case "CANCELADO" -> ref + " foi cancelada.";
+            default -> ref + " não está mais aguardando (status atual: " + status + ").";
+        };
+        return base + " Clique em chamar próximo novamente.";
     }
 
     private AtendimentoResponse toResponse(FilaAtendimento fila, String estacaoNome) {
