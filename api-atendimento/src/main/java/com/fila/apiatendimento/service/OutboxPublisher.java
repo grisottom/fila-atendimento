@@ -7,6 +7,7 @@ import com.fila.apiatendimento.repository.ServicoRepository;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.NonNull;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -104,7 +105,7 @@ public class OutboxPublisher {
      * mesmo que a transação externa sofra rollback.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void resetarPublicacao(Integer filaId) {
+    public void resetarPublicacao(@NonNull Integer filaId) {
         filaRepository.findById(filaId).ifPresent(f -> {
             f.setPublicadoNoBroker(false);
             filaRepository.save(f);

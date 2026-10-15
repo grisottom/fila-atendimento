@@ -72,6 +72,10 @@ CREATE TABLE fila_atendimento (
     horario_fim_atendimento TIMESTAMP,
     posicao_fila INTEGER NOT NULL DEFAULT 0,
     publicado_no_broker BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Contador anti-loop: nº de vezes que o item foi reprocessado a partir da DLQ.
+    -- Persiste no item porque o JMSXDeliveryCount do broker reseta a cada ciclo de
+    -- DLQ (comprovado em teste). Ao exceder o teto, o item vira FALHA_DLQ.
+    tentativas_dlq INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 0
 );
 

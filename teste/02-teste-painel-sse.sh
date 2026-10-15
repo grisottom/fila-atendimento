@@ -35,7 +35,7 @@ token_valido() {
 }
 
 # Verifica se tokens existentes ainda são válidos
-REUSAR_TOKENS=false
+REUSAR_TOKENS=true
 PRIMEIRO_ARQUIVO="$TOKEN_DIR/agencia-0001"
 if [ -f "$PRIMEIRO_ARQUIVO" ]; then
   PRIMEIRO_TOKEN=$(cat "$PRIMEIRO_ARQUIVO" 2>/dev/null)

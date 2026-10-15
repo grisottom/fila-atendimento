@@ -150,22 +150,33 @@ public class TriagemService {
      * ainda estiver viva na fila (uso indevido), o chamarProximo é idempotente:
      * ao consumir a duplicata, verá o status já diferente de AGUARDANDO e a descarta.
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public void republicar(Integer id) {
         FilaAtendimento fila = filaRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Atendimento não encontrado: " + id));
 
-        if (!"AGUARDANDO".equals(fila.getStatus())) {
+        // Aceita AGUARDANDO (rede de segurança comum) e FALHA_DLQ (item que esgotou
+        // as tentativas automáticas de reprocessamento): o "Republicar" é a
+        // intervenção humana que dá nova chance após a causa ter sido resolvida.
+        if (!"AGUARDANDO".equals(fila.getStatus()) && !DlqReprocessor.STATUS_FALHA_DLQ.equals(fila.getStatus())) {
             throw new IllegalArgumentException(
-                    "Só é possível republicar atendimentos AGUARDANDO (status atual: " + fila.getStatus() + ")");
+                    "Só é possível republicar atendimentos AGUARDANDO ou " + DlqReprocessor.STATUS_FALHA_DLQ
+                            + " (status atual: " + fila.getStatus() + ")");
         }
+
+        // Intervenção manual zera o contador anti-loop: o item ganha um ciclo de
+        // tentativas automáticas renovado. Também garante status AGUARDANDO para
+        // itens que vinham de FALHA_DLQ.
+        fila.setStatus("AGUARDANDO");
+        fila.setTentativasDlq(0);
+        filaRepository.save(fila);
 
         String permissao = fila.getServicoId() != null
                 ? servicoRepository.findById(fila.getServicoId()).map(s -> s.getPermissaoExigida()).orElse("basica")
                 : "basica";
 
         publicarNaQueueAgencia(fila.getAgenciaId(), fila.getTriagemUuid(), permissao, fila.getHorarioAgendado() != null);
-        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {}",
+        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {} (tentativas_dlq zerado)",
                 fila.getId(), fila.getTriagemUuid(), fila.getAgenciaId());
     }
 
@@ -210,7 +221,8 @@ public class TriagemService {
     }
 
     public List<AtendimentoResponse> listarAtendimentosDoDiaEsperando(String agenciaId) {
-        return filaRepository.findByAgenciaIdAndStatusIn(agenciaId, List.of("AGUARDANDO", "CANCELADO", "AUSENTE"))
+        return filaRepository.findByAgenciaIdAndStatusIn(agenciaId,
+                        List.of("AGUARDANDO", "CANCELADO", "AUSENTE", DlqReprocessor.STATUS_FALHA_DLQ))
                 .stream()
                 .map(f -> new AtendimentoResponse(f.getId(), f.getSenha(), f.getCpf(), f.getNomePessoa(),
                         f.getServicoId(), f.getStatus(), null, null, f.getHorarioChegada()))

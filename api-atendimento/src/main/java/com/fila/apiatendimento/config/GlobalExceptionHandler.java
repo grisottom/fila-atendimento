@@ -20,6 +20,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(Map.of("erro", ex.getMessage()));
     }
 
+    // Condição de negócio esperada: o estado atual não permite a operação.
+    // Ex.: nenhum painel ativo para o serviço no "chamar próximo". → 409 Conflict
+    @ExceptionHandler(NegocioException.class)
+    public ResponseEntity<Map<String, String>> handleNegocio(NegocioException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("erro", ex.getMessage()));
+    }
+
     // Erros internos (falhas inesperadas)
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {

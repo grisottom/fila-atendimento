@@ -58,6 +58,11 @@ public class FilaAtendimento {
     @Column(name = "publicado_no_broker", nullable = false)
     private boolean publicadoNoBroker = false;
 
+    // Contador anti-loop de reprocessamentos a partir da DLQ. Persiste no item
+    // porque o JMSXDeliveryCount do broker reseta a cada ciclo de DLQ.
+    @Column(name = "tentativas_dlq", nullable = false)
+    private int tentativasDlq = 0;
+
     @Version
     private Integer version;
 
@@ -95,6 +100,8 @@ public class FilaAtendimento {
     public void setPosicaoFila(Integer posicaoFila) { this.posicaoFila = posicaoFila; }
     public boolean isPublicadoNoBroker() { return publicadoNoBroker; }
     public void setPublicadoNoBroker(boolean publicadoNoBroker) { this.publicadoNoBroker = publicadoNoBroker; }
+    public int getTentativasDlq() { return tentativasDlq; }
+    public void setTentativasDlq(int tentativasDlq) { this.tentativasDlq = tentativasDlq; }
     public Integer getVersion() { return version; }
     public void setVersion(Integer version) { this.version = version; }
 }

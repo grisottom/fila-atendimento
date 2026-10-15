@@ -123,18 +123,42 @@ echo ""
 # ─── FASE 2: IMPORTAR NO KEYCLOAK ────────────────────────
 echo "[2/3] Importando no Keycloak ($KEYCLOAK_BASE_URL)..."
 
-# Obtém token de admin
-TOKEN=$(curl -s -X POST "$KEYCLOAK_BASE_URL/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=$ADMIN_USER" \
-  -d "password=$ADMIN_PASS" \
-  -d "grant_type=password" \
-  -d "client_id=admin-cli" | jq -r '.access_token')
+# Token de admin em ARQUIVO compartilhado, renovado periodicamente por um processo
+# em background. Em volume alto, criar milhares de usuários demora mais que a
+# validade do token (~1 min); sem renovação, as criações passam a falhar com
+# invalid_token no meio do processo. Os workers paralelos releem o token do arquivo.
+TOKEN_FILE="$LOG_DIR/.kc-admin-token"
 
+obter_admin_token() {
+  curl -s -X POST "$KEYCLOAK_BASE_URL/realms/master/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$ADMIN_USER" \
+    -d "password=$ADMIN_PASS" \
+    -d "grant_type=password" \
+    -d "client_id=admin-cli" | jq -r '.access_token'
+}
+
+TOKEN=$(obter_admin_token)
 if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
   echo "Erro: não foi possível obter token de admin. Keycloak rodando?"
   exit 1
 fi
+echo "$TOKEN" > "$TOKEN_FILE"
+
+# Renovador em background: reescreve o arquivo de token a cada 30s (bem abaixo da
+# validade típica de 60s), até ser morto no fim da importação.
+(
+  while true; do
+    sleep 30
+    NOVO=$(obter_admin_token)
+    if [ -n "$NOVO" ] && [ "$NOVO" != "null" ]; then
+      echo "$NOVO" > "$TOKEN_FILE"
+    fi
+  done
+) &
+TOKEN_RENEWER_PID=$!
+# Garante que o renovador seja encerrado ao sair do script (sucesso ou erro).
+trap 'kill "$TOKEN_RENEWER_PID" 2>/dev/null' EXIT
 
 # Registra atributo 'agencia' no User Profile (necessário no KC 24 para aceitar via API)
 echo "       Registrando atributo 'agencia' no User Profile..."
@@ -182,19 +206,23 @@ create_user() {
   local username=$(echo "$user_json" | jq -r '.username')
   local role=$(echo "$user_json" | jq -r '.realmRoles[0]')
 
+  # Relê o token do arquivo a cada criação: o renovador em background o mantém
+  # fresco, evitando invalid_token no meio de um setup longo.
+  local token=$(cat "$TOKEN_FILE")
+
   local payload=$(echo "$user_json" | jq '{
     username, enabled, firstName, lastName, email, emailVerified, attributes, credentials
   }')
 
   local http_code=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users" \
-    -H "Authorization: Bearer $TOKEN" \
+    -H "Authorization: Bearer $token" \
     -H "Content-Type: application/json" \
     -d "$payload")
 
   if [ "$http_code" = "201" ]; then
     local user_id=$(curl -s "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users?username=$username&exact=true" \
-      -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+      -H "Authorization: Bearer $token" | jq -r '.[0].id')
     if [ "$user_id" != "null" ] && [ -n "$user_id" ]; then
       local role_mapping="$ROLE_ATENDENTE"
       if [ "$role" = "admin" ]; then
@@ -202,7 +230,7 @@ create_user() {
       fi
       curl -s -o /dev/null -X POST \
         "$KEYCLOAK_BASE_URL/admin/realms/$REALM/users/$user_id/role-mappings/realm" \
-        -H "Authorization: Bearer $TOKEN" \
+        -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -d "$role_mapping"
     fi
@@ -215,13 +243,18 @@ create_user() {
 }
 
 export -f create_user
-export KEYCLOAK_BASE_URL REALM TOKEN ROLE_ATENDENTE ROLE_ADMIN PROGRESS_DIR
+export KEYCLOAK_BASE_URL REALM TOKEN_FILE ROLE_ATENDENTE ROLE_ADMIN PROGRESS_DIR
 
 TOTAL_USERS=$((TOTAL + TOTAL_ADMINS))
 seq 0 $((TOTAL_USERS - 1)) | xargs -P "$PARALLELISM" -I {} bash -c '
   user_json=$(jq -c ".[{}]" "'"$OUTPUT"'")
   create_user "{}" "$user_json"
 ' _
+
+# Importação concluída: encerra o renovador de token (não é mais necessário).
+kill "$TOKEN_RENEWER_PID" 2>/dev/null
+trap - EXIT
+rm -f "$TOKEN_FILE"
 
 # Relatório Keycloak
 OK_COUNT=$(ls "$PROGRESS_DIR"/ok_* 2>/dev/null | wc -l)

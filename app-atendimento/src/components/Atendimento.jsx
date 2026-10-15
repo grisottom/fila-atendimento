@@ -32,6 +32,7 @@ export default function Atendimento() {
   const [estacaoNumero, setEstacaoNumero] = useState(localStorage.getItem(getEstacaoNumeroKey()) || "");
   const [atendimentoAtual, setAtendimentoAtual] = useState(null);
   const [msg, setMsg] = useState("");
+  const [aviso, setAviso] = useState("");
   const [servicos, setServicos] = useState([]);
   const [avisoPisca, setAvisoPisca] = useState(false);
 
@@ -57,12 +58,12 @@ export default function Atendimento() {
   }, [agenciaId]);
 
   useEffect(() => {
-    if (atendimentoAtual?.aviso) {
+    if (atendimentoAtual?.aviso || aviso) {
       setAvisoPisca(true);
       const timer = setTimeout(() => setAvisoPisca(false), 1500);
       return () => clearTimeout(timer);
     }
-  }, [atendimentoAtual]);
+  }, [atendimentoAtual, aviso]);
 
   async function carregarAtivo() {
     try {
@@ -99,13 +100,26 @@ export default function Atendimento() {
 
   async function chamarProximo() {
     setMsg("");
+    setAviso("");
     localStorage.setItem(getEstacaoKey(), estacaoId);
     localStorage.setItem(getAgenciaKey(), agenciaId);
     try {
       const res = await api.post("/api/atendimento/chamar", { estacaoId: Number(estacaoId) });
-      setAtendimentoAtual(res);
+      if (!res || !res.id) {
+        // Nenhum atendimento foi efetivamente chamado (mensagem reentregue/duplicata
+        // já fora de AGUARDANDO, ou item ainda não disponível no banco). O backend
+        // devolve id=null com um aviso — não carregamos como atendimento ativo,
+        // apenas destacamos o aviso para o atendente tentar de novo.
+        setAtendimentoAtual(null);
+        setAviso(res?.aviso || "Nenhum atendimento disponível. Clique em chamar próximo novamente.");
+      } else {
+        setAtendimentoAtual(res);
+      }
       mutarFila();
-    } catch (err) { setMsg(err.message); }
+    } catch (err) {
+      setAtendimentoAtual(null);
+      setMsg(err.message);
+    }
   }
 
   async function ausentar() {
@@ -174,7 +188,7 @@ export default function Atendimento() {
 
       {msg && <p style={{ color: "blue" }}>{msg}</p>}
 
-      {atendimentoAtual?.aviso && (
+      {(atendimentoAtual?.aviso || aviso) && (
         <p style={{
           color: "#d32f2f",
           fontWeight: "bold",
@@ -185,7 +199,7 @@ export default function Atendimento() {
           opacity: avisoPisca ? 1 : 0.6,
           transition: "opacity 0.3s ease"
         }}>
-          ⚠ {atendimentoAtual.aviso}
+          ⚠ {atendimentoAtual?.aviso || aviso}
         </p>
       )}
 

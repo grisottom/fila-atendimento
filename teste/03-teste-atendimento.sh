@@ -401,45 +401,50 @@ token_valido() {
   [ $((EXP - 300)) -gt $AGORA ]
 }
 
-# Verifica se tokens existentes ainda são válidos e aceitos pela API
-REUSAR_TOKENS=false
-if [ -f "$TOKENS_DIR/agencia-0001.tokens" ] && [ -f "$TOKENS_DIR/triagem.token" ]; then
-  PRIMEIRO_TOKEN=$(head -1 "$TOKENS_DIR/agencia-0001.tokens" 2>/dev/null)
-  if token_valido "$PRIMEIRO_TOKEN"; then
-    # Testa contra a API para garantir que a chave do Keycloak não mudou
-    HTTP_TEST=$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: Bearer $PRIMEIRO_TOKEN" \
-      "$BASE_URL/api/atendimento/ativo")
-    if [ "$HTTP_TEST" != "401" ]; then
-      TOKEN_TRIAGEM=$(cat "$TOKENS_DIR/triagem.token")
-      if token_valido "$TOKEN_TRIAGEM"; then
-        REUSAR_TOKENS=true
-      fi
+# Reuso de tokens POR TOKEN: a validação de expiração (token_valido) é local e
+# barata (decodifica o JWT e compara 'exp'), sem chamar o Keycloak. Então, em vez
+# de decidir "tudo ou nada" olhando só a agencia-0001, cada token é verificado
+# individualmente antes de ser (re)gerado — reaproveitando os válidos e gerando
+# apenas os expirados/ausentes.
+if true; then
+  log_info "Obtendo/reaproveitando tokens ($TOTAL_ATENDENTES atendentes + 1 triagem)..."
+
+  # Triagem: reusa se ainda válido, senão regera.
+  TOKEN_TRIAGEM=$(cat "$TOKENS_DIR/triagem.token" 2>/dev/null || true)
+  if ! token_valido "$TOKEN_TRIAGEM"; then
+    TOKEN_TRIAGEM=$(obter_token "$TRIAGEM_USER" "$TRIAGEM_PASS" || true)
+    if [ -z "$TOKEN_TRIAGEM" ]; then
+      log_erro "Falha token triagem"
+      exit 1
     fi
+    echo "$TOKEN_TRIAGEM" > "$TOKENS_DIR/triagem.token"
   fi
-fi
-
-if [ "$REUSAR_TOKENS" == "true" ]; then
-  log_ok "Tokens existentes ainda válidos, reutilizando."
-else
-  log_info "Obtendo tokens ($TOTAL_ATENDENTES atendentes + 1 triagem) em paralelo..."
-
-  TOKEN_TRIAGEM=$(obter_token "$TRIAGEM_USER" "$TRIAGEM_PASS" || true)
-  if [ -z "$TOKEN_TRIAGEM" ]; then
-    log_erro "Falha token triagem"
-    exit 1
-  fi
-  echo "$TOKEN_TRIAGEM" > "$TOKENS_DIR/triagem.token"
 
   MAX_TOKEN_PARALELO=100
+
+  # token_valido precisa estar disponível nos subprocessos.
+  export -f token_valido
 
   obter_tokens_agencia() {
     local a=$1
     local AGENCIA_ID
     AGENCIA_ID=$(printf "agencia-%04d" "$a")
     local TOKEN_FILE="$TOKENS_DIR/$AGENCIA_ID.tokens"
-    > "$TOKEN_FILE"
+
+    # Lê os tokens já em cache (uma linha por atendente), se houver.
+    local CACHE=()
+    if [ -f "$TOKEN_FILE" ]; then
+      mapfile -t CACHE < "$TOKEN_FILE"
+    fi
+
+    local NOVOS=()
     for n in $(seq 1 $NUM_ATENDENTES_POR_AGENCIA); do
+      local EXISTENTE="${CACHE[$((n-1))]}"
+      # Reaproveita o token do cache se ainda válido (checagem local, sem rede).
+      if token_valido "$EXISTENTE"; then
+        NOVOS+=("$EXISTENTE")
+        continue
+      fi
       local USERNAME="atend-${AGENCIA_ID}-${n}"
       local TOKEN
       TOKEN=$(curl -s -X POST "$KEYCLOAK_URL" \
@@ -454,8 +459,11 @@ else
           -d "username=atend-all" \
           -d "password=$ATEND_PASS" | jq -r '.access_token')
       fi
-      echo "$TOKEN" >> "$TOKEN_FILE"
+      NOVOS+=("$TOKEN")
     done
+
+    # Reescreve o arquivo com os tokens (reaproveitados + novos), uma linha cada.
+    printf "%s\n" "${NOVOS[@]}" > "$TOKEN_FILE"
   }
   export -f obter_tokens_agencia
   export KEYCLOAK_URL CLIENT_ID ATEND_PASS NUM_ATENDENTES_POR_AGENCIA TOKENS_DIR

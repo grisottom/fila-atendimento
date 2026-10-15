@@ -237,21 +237,26 @@ export default function Triagem() {
               {esperandoAtendimento.map((a) => (
                 <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 10px" }}>
-                    <a href="#" onClick={(e) => { e.preventDefault(); selecionarAtendimento(a); }} style={{ color: "#1976d2", cursor: "pointer" }}>{a.id}</a>
+                    {a.status === "AGUARDANDO" ? (
+                      a.id
+                    ) : (
+                      <a href="#" onClick={(e) => { e.preventDefault(); selecionarAtendimento(a); }} style={{ color: "#1976d2", cursor: "pointer" }}>{a.id}</a>
+                    )}
                   </td>
                   <td style={{ padding: "6px 10px", fontWeight: "bold" }}>{a.senha}</td>
                   <td style={{ padding: "6px 10px" }}>{a.cpf}</td>
                   <td style={{ padding: "6px 10px" }}>{a.nomePessoa}</td>
                   <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === a.servicoId)?.nome || a.servicoId}</td>
-                  <td style={{ padding: "6px 10px", color: a.status === "AUSENTE" ? "orange" : "inherit" }}>{a.status}</td>
+                  <td style={{ padding: "6px 10px", color: a.status === "FALHA_DLQ" ? "#d32f2f" : a.status === "AUSENTE" ? "orange" : "inherit", fontWeight: a.status === "FALHA_DLQ" ? "bold" : "normal" }}>{a.status}</td>
                   <td style={{ padding: "6px 10px" }}>{a.horarioChegada ? new Date(a.horarioChegada).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                   <td style={{ padding: "6px 10px" }}>
-                    {a.status === "AGUARDANDO" && (
+                    {(a.status === "AGUARDANDO" || a.status === "FALHA_DLQ") && (
                       <button
-                        type="button"
+   
+                      type="button"
                         onClick={() => republicar(a)}
                         disabled={republicandoId === a.id}
-                        title="Republicar, use em caso da triagem não aparecer no atendimento"
+                        title="Use somento no caso da triagem não aparecer no atendimento"
                         style={{
                           padding: "4px 12px",
                           border: "1px solid #1976d2",
