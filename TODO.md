@@ -58,7 +58,9 @@
 **Proteção que já existe:** o `ReplayListener` consome a fila `replay-request` por um único container, o que serializa/enfileira a rajada naturalmente (a fila JMS absorve o pico). O custo é latência: os últimos painéis demoram um pouco mais para popular — degradação graciosa, aceitável.
 
 **Mitigação principal — Jitter na reconexão (front-end app-painel):**
-- [ ] Ao reconectar o `EventSource` após queda, aguardar um atraso aleatório (ex.: 0-10s) antes de reabrir, para espalhar a rajada no tempo em vez de todos reconectarem no mesmo instante. É a mitigação de maior impacto pelo menor esforço, e ataca a raiz do problema.
+- [x] Implementado em `TelaChamadas.jsx`: no `es.onerror`, o delay fixo de 3s foi
+  trocado por atraso aleatório de **1-10s** (`1000 + random(0..9000)`) antes de
+  reabrir o `EventSource`, espalhando a rajada de reconexões/replay-requests no tempo.
 
 **Mitigações complementares (infra/back-end):**
 - [ ] Limitar a concorrência do `ReplayListener` (evitar disparar queries demais em paralelo no Postgres).
