@@ -2,6 +2,15 @@
 
 Sistema de gerenciamento de fila para agências, com suporte a atendimentos agendados e espontâneos, painel de chamadas em tempo real e controle de acesso via Keycloak.
 
+Este documento é a **visão geral** do sistema. Os detalhes técnicos de cada módulo ficam nos READMEs específicos:
+
+| Módulo | Tipo | Documentação |
+|--------|------|--------------|
+| `app-atendimento` | Frontend React (triagem/atendimento/admin) | [README-app-atendimento.md](README-app-atendimento.md) |
+| `app-painel` | Frontend React (painel de chamadas) | [README-app-painel.md](README-app-painel.md) |
+| `api-atendimento` | Backend Spring Boot (lógica de negócio + persistência) | [README-api-atendimento.md](README-api-atendimento.md) |
+| `api-painel` | Backend Spring Boot (SSE dos painéis) | [README-api-painel.md](README-api-painel.md) |
+
 ---
 
 ## Visão Geral da Arquitetura
@@ -44,47 +53,37 @@ O Traefik roteia as requisições:
 - `localhost:3001/*` → `app-atendimento` (frontend estático)
 - `localhost:3001/api/*` → `api-atendimento`
 
+As duas APIs **não** conversam por REST entre si: a comunicação é 100% via Artemis (tópicos e filas JMS). A `api-atendimento` é a única com banco e detém toda a lógica de negócio; a `api-painel` é stateless e só faz a ponte broker↔browser (SSE).
+
 ---
 
 ## Módulos
 
-### app-painel
-Interface React usada exclusivamente por usuários com role `admin`. Exibe os atendimentos em curso (CHAMANDO, EM_ATENDIMENTO ...) em tempo real via SSE. Cada instância do painel é identificada por agência + número do painel. A agência é obtida automaticamente do token do usuário.
+- **app-painel** — Interface React usada exclusivamente por usuários com role `admin`. Exibe os atendimentos em curso (CHAMANDO, EM_ATENDIMENTO...) em tempo real via SSE. Cada painel é identificado por agência + número. Detalhes em [README-app-painel.md](README-app-painel.md).
+- **app-atendimento** — Interface React com três perfis: **Triagem** (recepção por CPF, agendamentos, geração de senha), **Atendimento** (estação, chamar próximo, ciclo do atendimento) e **Admin** (painéis, estações, associação painel↔serviço, permissões). Detalhes em [README-app-atendimento.md](README-app-atendimento.md).
+- **api-atendimento** — Backend Spring Boot com persistência em Postgres. Centraliza triagem, fila, atendimento e publicação de eventos no Artemis. Detalhes em [README-api-atendimento.md](README-api-atendimento.md).
+- **api-painel** — Backend Spring Boot sem persistência. Consome os eventos do Artemis (um listener compartilhado no wildcard `agencia.*.painel.*`) e os repassa aos painéis via SSE; solicita replay ao reconectar. Detalhes em [README-api-painel.md](README-api-painel.md).
 
-### api-painel
-API Spring Boot sem persistência. Gerencia conexões SSE dos painéis e cria subscriptions dinâmicas no Artemis por tópico (`agencia.<id>.painel.<n>`). Quando um painel reconecta, solicita replay dos atendimentos ativos.
-
-### app-atendimento
-Interface React com três perfis de uso:
-- **Triagem** (atendentes com permissão `basica` ou `admin`): recepção da pessoa por CPF, consulta de agendamentos, geração de senha e inserção na fila.
-- **Atendimento** (todos os atendentes): seleção de estação, chamada do próximo, controle do ciclo de atendimento.
-- **Admin**: configuração de painéis, estações, associação painel↔serviço e gestão de permissões de atendentes.
-
-A agência do usuário é obtida automaticamente do token JWT (atributo `agencia` no Keycloak) e exibida como campo somente-leitura em todas as telas.
-
-### api-atendimento
-API Spring Boot com persistência em Postgres. Centraliza toda a lógica de negócio: triagem, fila, atendimento e publicação de eventos no Artemis para os painéis associados ao serviço.
+A agência do usuário é obtida automaticamente do token JWT (atributo `agencia` no Keycloak) e exibida como campo somente-leitura nas telas.
 
 ---
 
 ## Controle de Acesso
 
-### Keycloak (Papéis)
+### Keycloak (papéis)
 
-Realm: `fila-atendimento`
-
-Do Keycloak vêm os **papéis** de acesso:
+Realm: `fila-atendimento`. Do Keycloak vêm os **papéis** de acesso:
 
 | Role        | Descrição                     | Acesso HTTP                        |
 |-------------|-------------------------------|------------------------------------|
 | `admin`     | Gerente da agência            | Todas as rotas (`/api/admin/**`, `/api/triagem/**`, `/api/atendimento/**`) |
 | `atendente` | Atendente (qualquer nível)    | Triagem (`/api/triagem/**`) e Atendimento (`/api/atendimento/**`) |
 
-Atributo do usuário no Keycloak: `agencia` (ex: `agencia-01`) — mapeado no token JWT via protocol mapper.
+Atributo do usuário no Keycloak: `agencia` (ex.: `agencia-01`), mapeado no token JWT via protocol mapper.
 
-### Banco de Dados (Permissões de Atendimento)
+### Banco de dados (permissões de atendimento)
 
-As **permissões de atendimento** (que determinam quais serviços o atendente pode chamar) são gerenciadas no banco de dados, nas tabelas `atendente` e `permissoes_atendente`:
+As **permissões de atendimento** (quais serviços o atendente pode chamar) são gerenciadas no banco, nas tabelas `atendente` e `permissoes_atendente`:
 
 | Permissão  | Serviços atendidos                         |
 |------------|--------------------------------------------|
@@ -92,7 +91,7 @@ As **permissões de atendimento** (que determinam quais serviços o atendente po
 | `normal`   | Serviço Normal 01, Serviço Normal 02       |
 | `especial` | Serviço Especial 01                        |
 
-Um atendente pode ter múltiplas permissões. O admin pode alterar permissões a qualquer momento via API REST.
+Um atendente pode ter múltiplas permissões; o admin as altera via API REST a qualquer momento.
 
 ### Usuários pré-configurados
 
@@ -119,9 +118,7 @@ agencia (id, nome)
 
 servico (id, nome, permissao_exigida)
 
-paineis_servicos (painel_id, servico_id)
-  — Associação N:N entre painéis e serviços
-  — Define quais painéis recebem eventos de um dado serviço
+paineis_servicos (painel_id, servico_id)   — associação N:N painel↔serviço
 
 atendente (username, agencia_id)
   └── permissoes_atendente (permissao: basica | normal | especial)
@@ -129,30 +126,50 @@ atendente (username, agencia_id)
 pessoa (cpf, nome)
   └── agendamento (agencia_id, servico_id, data_hora)
 
-fila_atendimento
-  ├── agencia_id
-  ├── cpf → pessoa
-  ├── servico_id → servico
-  ├── senha (5 chars, maiúsculas + números)
-  ├── status: AGUARDANDO | CHAMANDO | EM_ATENDIMENTO | AUSENTE | FINALIZADO | CANCELADO
-  ├── estacao_id → estacao
-  ├── atendente_username
-  ├── horario_agendado (null = espontâneo)
-  ├── horario_chegada
-  ├── horario_chamada
-  ├── horario_inicio_atendimento
-  ├── horario_fim_atendimento
-  ├── posicao_fila
-  └── publicado_no_broker (flag do outbox pattern)
+fila_atendimento   — agregado central (status, horários, senha, atendente, estação,
+                     triagem_uuid, posicao_fila, publicado_no_broker, ...)
 ```
 
-### Relacionamento Painel ↔ Serviço
+O detalhamento completo das colunas de `fila_atendimento` e das entidades está em [README-api-atendimento.md](README-api-atendimento.md#modelo-de-dados-entidades).
 
-O painel não está atrelado à estação, e sim ao serviço. Quando um atendente chama o próximo:
-1. O sistema identifica o serviço do atendimento
-2. Busca na tabela `paineis_servicos` quais painéis estão associados àquele serviço
-3. Publica o evento em **todos** os painéis associados
-4. Se o serviço não tiver nenhum painel associado, o chamado é **recusado** com mensagem de erro
+### Relacionamento painel ↔ serviço
+
+O painel não está atrelado à estação, e sim ao **serviço**. Ao chamar o próximo, o sistema identifica o serviço do atendimento, busca em `paineis_servicos` quais painéis estão associados a ele e publica o evento em **todos** eles. Se o serviço não tiver nenhum painel associado, o chamado é **recusado** (409).
+
+---
+
+## Fluxo de um atendimento (resumo)
+
+1. **Triagem** recepciona a pessoa (CPF + serviço), gera a senha e insere a linha em `fila_atendimento` (status `AGUARDANDO`), publicando uma mensagem na queue JMS `agencia.<id>.fila`.
+2. **Atendente** chama o próximo: a `api-atendimento` consome a mensagem da queue (com selector pelas permissões do atendente), atualiza o status para `CHAMANDO` e publica o evento nos tópicos dos painéis do serviço.
+3. **api-painel** recebe o evento e o repassa ao browser via SSE; o painel exibe a senha.
+4. O atendente percorre o ciclo: `iniciar` → `finalizar`/`cancelar`, ou `ausentar` (volta ao fim da fila). Cada transição publica um evento nos painéis.
+
+```
+                    ┌──────────────┐
+                    │  AGUARDANDO  │◄──────────────────────────┐
+                    └──────┬───────┘                           │
+                           │ chamar próximo                    │
+                           ▼                                   │
+                    ┌──────────────┐                           │
+                    │   CHAMANDO   │                           │
+                    └──────┬───────┘                           │
+                     ┌─────┴───────────┐                       │
+                     ▼ iniciar         ▼ ausentar              │
+              ┌──────────────┐  ┌──────────────┐               │
+              │EM_ATENDIMENTO│  │    AUSENTE   │──────────────►┘
+              └──────┬───────┘  └──────────────┘   volta ao fim
+               ┌─────┴─────────┐                     da fila
+               ▼ finalizar     ▼ cancelar
+         ┌──────────────┐  ┌──────────────┐
+         │  FINALIZADO  │  │   CANCELADO  │
+         └──────────────┘  └──────────────┘
+```
+
+Pontos de projeto importantes — detalhados nos READMEs de módulo:
+- **Por que um broker (Artemis) em vez de REST entre as APIs**, modelo pub/sub e replay ao reconectar: [README-api-painel.md](README-api-painel.md).
+- **Prioridade na fila** (agendados antes de espontâneos), **outbox pattern**, **redelivery** e **DLQ** (reprocessamento e `FALHA_DLQ`): [README-api-atendimento.md](README-api-atendimento.md#resiliência-outbox-redelivery-e-dlq).
+- **Heartbeat/liveness dos painéis** e o ping SSE: [README-api-painel.md](README-api-painel.md) e [README-api-atendimento.md](README-api-atendimento.md).
 
 ---
 
@@ -162,7 +179,7 @@ O painel não está atrelado à estação, e sim ao serviço. Quando um atendent
 docker compose down -v && docker compose up -d --build
 ```
 
-O Keycloak usa H2 em memória e importa apenas os usuários essenciais (~7), resultando em startup rápido (~20-30s). Aguarde o health check antes de acessar as aplicações.
+O Keycloak usa H2 em memória e importa apenas os usuários essenciais (~7), com startup rápido (~20–30s). Aguarde o health check antes de acessar as aplicações.
 
 | URL                          | Descrição                  |
 |------------------------------|----------------------------|
@@ -177,17 +194,15 @@ O Keycloak usa H2 em memória e importa apenas os usuários essenciais (~7), res
 | Script                              | Descrição                                                        |
 |-------------------------------------|------------------------------------------------------------------|
 | `01-setup-usuarios-keycloak.sh`     | Cria atendentes no Keycloak (role `atendente`) e no banco (permissões) |
-| `02-teste-atendimento.sh`           | Teste de carga: triagem → chamada → atendimento → finalização em paralelo |
-| `03-teste-painel-sse.sh`            | Abre conexões SSE simulando painéis e exibe eventos em tempo real |
+| `02-teste-painel-sse.sh`            | Abre conexões SSE simulando painéis e exibe eventos em tempo real |
+| `03-teste-atendimento.sh`           | Teste de carga: triagem → chamada → atendimento → finalização em paralelo |
+| `04-limpar-cache.sh`                | Remove tokens em cache e logs de execuções de teste anteriores |
 
 Fluxo para teste de carga:
 
 ```bash
 # 1. Sobe o ambiente
 docker compose up -d --build
-
-# derrubar tudo e subir do zero, comleto
-#docker compose down && docker compose up -d
 
 # 2. Cria usuários de teste no Keycloak + banco (idempotente)
 ./teste/01-setup-usuarios-keycloak.sh
@@ -198,296 +213,3 @@ docker compose up -d --build
 # 4. Executa fluxo completo
 ./teste/03-teste-atendimento.sh
 ```
-
----
-
-## Por que usar um Broker (Artemis) para os eventos do painel?
-
-A comunicação entre `api-atendimento` e `api-painel` poderia ser feita diretamente via chamada REST. O broker foi escolhido por razões arquiteturais:
-
-**Desacoplamento entre produtores e consumidores**
-A `api-atendimento` não precisa saber quantas instâncias da `api-painel` existem, nem se estão no ar no momento da publicação. Ela publica no tópico e o Artemis se encarrega da entrega.
-
-**Modelo pub/sub por tópico dinâmico**
-Cada painel físico tem seu próprio tópico (`agencia.<id>.painel.<n>`). A `api-painel` cria uma subscription temporária nesse tópico quando o browser conecta via SSE, e o Artemis destrói automaticamente quando o browser desconecta. Isso permite múltiplos painéis ativos simultaneamente, cada um recebendo apenas os eventos da sua agência e número.
-
-**Resiliência a reconexões**
-Quando o browser do painel reconecta, a `api-painel` solicita um replay publicando `{ agenciaId, painelId }` na fila `replay-request`. A `api-atendimento` republica os atendimentos ativos no tópico do painel, que já está com o subscriber ativo. Esse mecanismo seria mais complexo de implementar com chamadas REST diretas. O mecanismo é explicado em detalhes na seção "Replay ao reconectar o Painel" abaixo.
-
-**Escalabilidade horizontal**
-Com múltiplas instâncias da `api-painel` (ex: em Kubernetes), o Artemis garante que a mensagem chegue exatamente na instância onde o browser do painel está conectado, pois a subscription temporária está vinculada àquela instância.
-
-```
-  api-atendimento          Artemis              api-painel
-       │                     │                      │
-       │  publica no tópico  │                      │
-       │  agencia.01.painel.1│                      │
-       │ ──────────────────► │                      │
-       │                     │  entrega somente na  │
-       │                     │  instância com sub   │
-       │                     │  ativa para o tópico │
-       │                     │ ────────────────────►│
-       │                     │                      │  SSE event
-       │                     │                      │ ──────────► browser
-```
-
----
-
-## Funcionamento da Fila de Atendimento
-
-O sistema usa duas estruturas complementares com nomes parecidos:
-
-| Conceito | Onde vive | Propósito |
-|----------|-----------|-----------|
-| **Tabela `fila_atendimento`** | Postgres | Registro persistente de cada atendimento (status, timestamps, atendente, estação) |
-| **Queue JMS `agencia.<id>.fila`** | Artemis (broker) | Fila de mensagens para consumo pelo atendente; cada mensagem aponta para um registro da tabela acima via `filaAtendimentoId` |
-| **Tópico JMS `agencia.<id>.painel.<n>`** | Artemis (broker) | Canal pub/sub para notificar painéis sobre mudanças de status |
-
-O fluxo normal: a triagem cria um registro na **tabela** e publica uma mensagem na **queue JMS**. Quando o atendente chama o próximo, ele consome da **queue JMS**, atualiza o registro na **tabela**, e publica nos **tópicos JMS** dos painéis.
-
-### Ciclo completo de um atendimento
-
-```
-  PESSOA CHEGA
-       │
-       ▼
-┌─────────────┐     CPF + Serviço     ┌──────────────────────────────────┐
-│   Triagem   │ ───────────────────►  │  1. INSERT na tabela             │
-│  (atendente │                       │     fila_atendimento             │
-│   basica)   │  ◄── agendamento?     │     (status: AGUARDANDO)         │
-└─────────────┘     (pré-preenche)    │                                  │
-                                      │  2. Publica mensagem na          │
-                                      │     queue JMS                    │
-                                      │     agencia.<id>.fila            │
-                                      │     (contém filaAtendimentoId)   │
-                                      └────────────────┬─────────────────┘
-                                                       │
-                                            prioridade: agendado > espontâneo
-                                            desempate: ordem de chegada (FIFO)
-                                                       │
-       ┌───────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────┐   POST /api/atendimento/chamar   ┌──────────────────────────────┐
-│  Atendente  │ ──────────────────────────────►  │  api-atendimento             │
-│  (tela de   │                                  │                              │
-│ atendimento)│  ◄── AtendimentoResponse         │  1. Consome mensagem da      │
-└─────────────┘                                  │     queue JMS*               │
-                                                 │  2. Busca registro na tabela │
-                                                 │     fila_atendimento         │
-                                                 │  3. Verifica painéis do      │
-                                                 │     serviço**                │
-                                                 │  4. UPDATE status →          │
-                                                 │     CHAMANDO na tabela       │
-                                                 │  5. Publica evento nos       │
-                                                 │     tópicos JMS dos painéis  │
-                                                 └────────────────┬─────────────┘
-                                                                  │
-                              tópicos JMS: agencia.<id>.painel.<n> (1..N)
-                                                                  │
-                                                                  ▼
-                                                         ┌────────────────┐
-                                                         │   api-painel   │
-                                                         │  (subscription │
-                                                         │   dinâmica)    │
-                                                         └────────┬───────┘
-                                                                  │  SSE event
-                                                                  ▼
-                                                         ┌────────────────┐
-                                                         │   app-painel   │
-                                                         │  card CHAMANDO │
-                                                         │  (blink label) │
-                                                         └────────────────┘
-```
-
-*A seleção do próximo é feita via `receiveSelected` na queue JMS (`agencia.<id>.fila`) com selector de permissões do atendente (consultadas no banco). O broker entrega apenas mensagens cujo `permissao` corresponde às permissões do atendente. A mensagem contém o `filaAtendimentoId`, usado para localizar e atualizar o registro na tabela `fila_atendimento`.
-
-**Se o serviço não tiver painéis associados na tabela `paineis_servicos`, o chamado é recusado com erro e a mensagem é devolvida à queue (via outbox).
-
-### Transições de status
-
-```
-                    ┌──────────────┐
-                    │  AGUARDANDO  │◄──────────────────────────┐
-                    └──────┬───────┘                           │
-                           │ chamar próximo                    │
-                           ▼                                   │
-                    ┌──────────────┐                           │
-              ┌────►│   CHAMANDO   │                           │
-              │     └──────┬───────┘                           │
-              │            │                                   │
-              │     ┌──────┴──────────────┐                    │
-              │     │                     │                    │
-              │     ▼ iniciar             ▼ ausentar           │
-              │  ┌──────────────┐  ┌──────────────┐            │
-              │  │EM_ATENDIMENTO│  │    AUSENTE   │───────────►┘
-              │  └──────┬───────┘  └──────────────┘  volta ao fim
-              │         │                              da fila
-              │  ┌──────┴──────────────┐
-              │  │                     │
-              │  ▼ finalizar           ▼ cancelar
-              │  ┌──────────────┐  ┌──────────────┐
-              │  │  FINALIZADO  │  │   CANCELADO  │
-              │  └──────────────┘  └──────────────┘
-              │
-              └── cada transição publica evento nos painéis do serviço → SSE
-```
-
----
-
-## Outbox Pattern — Garantia de publicação na queue JMS
-
-### Problema
-
-Quando a triagem recepciona uma pessoa, um registro é inserido na tabela `fila_atendimento` e uma mensagem precisa ser publicada na queue JMS (`agencia.<id>.fila`) para que atendentes possam consumir. Se o banco commita mas o broker falha (rede, broker reiniciando), o registro fica "AGUARDANDO" na tabela sem mensagem correspondente na queue — nunca será chamado.
-
-O cenário inverso também existe: no `chamarProximo`, a mensagem é consumida da queue JMS via `receiveSelected`. Se depois o banco falhar (rollback na atualização da tabela `fila_atendimento`), a mensagem já foi removida da queue e o registro fica preso.
-
-### Solução
-
-O `OutboxPublisher` implementa um outbox pattern leve usando a coluna `publicado_no_broker` na tabela `fila_atendimento`:
-
-```
-  TriagemService                  Banco (tabela             OutboxPublisher (a cada ~5s)
-       │                          fila_atendimento)               │
-       │                                │                         │
-       │  INSERT registro               │                         │
-       │  publicado_no_broker=false     │                         │
-       │ ──────────────────────────────►│                         │
-       │                                │                         │
-       │                                │   SELECT ... WHERE      │
-       │                                │   publicado_no_broker   │
-       │                                │   = false               │
-       │                                │   AND status=           │
-       │                                │   'AGUARDANDO'          │
-       │                                │◄────────────────────────│
-       │                                │                         │
-       │                                │           publica na    │
-       │                                │           queue JMS     │
-       │                                │           agencia.x.fila│
-       │                                │                         │──► Artemis
-       │                                │                         │
-       │                                │   UPDATE                │
-       │                                │   publicado_no_broker   │
-       │                                │   = true                │
-       │                                │◄────────────────────────│
-```
-
-Para o cenário do `chamarProximo`, em caso de erro (mensagem consumida da queue + rollback na tabela), no bloco `catch` o `AtendimentoService` chama `outboxPublisher.resetarPublicacao(filaId)`. Esse método usa `@Transactional(propagation = REQUIRES_NEW)`, garantindo que o reset na tabela commita independente do rollback da transação externa. Na próxima execução do scheduler (~5s), a mensagem é republicada na queue JMS.
-
-### Idempotência
-
-Como o outbox pode republicar mensagens que já existem na queue JMS, o `chamarProximo` tem uma verificação de idempotência: ao consumir uma mensagem, busca o registro na tabela `fila_atendimento` pelo `filaAtendimentoId` — se o status já não é "AGUARDANDO", descarta a mensagem duplicada e tenta consumir a próxima.
-
-### Performance
-
-Um partial index garante que o scheduler não faça full table scan:
-
-```sql
-CREATE INDEX idx_fila_outbox_pendente
-    ON fila_atendimento(id)
-    WHERE status = 'AGUARDANDO' AND publicado_no_broker = FALSE;
-```
-
-O índice se mantém pequeno porque registros pendentes são uma fração mínima da tabela a qualquer momento.
-
----
-
-### Replay ao reconectar o Painel
-
-Quando o browser do painel reconecta (refresh, queda de rede, reinício do servidor), o estado em memória é perdido. O mecanismo de replay recupera os atendimentos ativos:
-
-```
-  browser abre SSE
-        │
-        ▼
-┌───────────────┐   registrar(agenciaId, painelId)   ┌──────────────────┐
-│  app-painel   │ ─────────────────────────────────► │   api-painel     │
-└───────────────┘                                    │                  │
-        ▲                                            │ 1. cria container│
-        │                                            │    JMS no tópico │
-        │  SSE events                                │    agencia.x.    │
-        │                                            │    painel.n      │
-        │                                            │                  │
-        │                                            │ 2. aguarda 500ms │
-        │                                            │    (subscriber   │
-        │                                            │    registrar no  │
-        │                                            │    Artemis)      │
-        │                                            │                  │
-        │                                            │ 3. publica em    │
-        │                                            │    queue JMS     │
-        │                                            │    replay-request│
-        │                                            │    { agenciaId,  │
-        │                                            │      painelId }  │
-        │                                            └────────┬─────────┘
-        │                                                     │
-        │                       queue JMS: replay-request     │
-        │                                                     ▼
-        │                                            ┌──────────────────┐
-        │                                            │ api-atendimento  │
-        │                                            │ (ReplayListener) │
-        │                                            │                  │
-        │                                            │ 1. consulta tabela
-        │                                            │    fila_atendimento
-        │                                            │    status IN     │
-        │                                            │    (CHAMANDO,    │
-        │                                            │    EM_ATENDIMENTO)
-        │                                            │                  │
-        │                                            │ 2. filtra por    │
-        │                                            │    serviço →     │
-        │                                            │    paineis_serv. │
-        │                                            │    → painelId    │
-        │                                            │                  │
-        │                                            │ 3. republica cada│
-        │                                            │    atendimento no│
-        │                                            │    tópico JMS    │
-        │                                            └────────┬─────────┘
-        │                                                     │
-        │                  tópico JMS: agencia.x.painel.n     │
-        │                                                     ▼
-        │                                            ┌──────────────────┐
-        └────────────────────────────────────────────│   api-painel     │
-                    SSE → cards reaparecem           │  (subscription   │
-                    com status correto               │   ativa)         │
-                                                     └──────────────────┘
-```
-
-O delay de 500ms é necessário porque a subscription no tópico JMS do Artemis é criada de forma assíncrona. Sem ele, o replay chegaria antes do subscriber estar pronto e a mensagem seria perdida.
-
-### Heartbeat dos painéis (liveness)
-
-A `api-atendimento` precisa saber quais painéis estão ativos para avisar o atendente, no momento da chamada, se o serviço não tem nenhum painel para exibir a senha. Esse liveness é mantido por heartbeats que a `api-painel` publica na queue JMS `painel-heartbeat`, consumidos pelo `HeartbeatListener` na `api-atendimento`, que atualiza a coluna `ultimo_heartbeat` do painel.
-
-Há três momentos de publicação:
-
-| Momento | Sinal | Origem |
-|---------|-------|--------|
-| Ao conectar o SSE | `online=true` | `PainelSseService.registrar` |
-| Ao desconectar | `online=false` | `PainelSseService.cleanup` |
-| Periódico (a cada 5 min) | `online=true` | `HeartbeatPublisher` |
-
-O **`HeartbeatPublisher`** envia `online=true` a cada 5 minutos para todos os painéis conectados. Seu papel é **renovar** o `ultimo_heartbeat` de conexões de longa duração (os painéis ficam abertos o dia todo): a `api-atendimento` considera um painel ativo apenas se o heartbeat for mais recente que **10 minutos** (`existePainelAtivoParaServico`). A folga entre publicar a cada 5 min e tolerar até 10 min permite perder um heartbeat (ex.: broker reiniciando) sem o painel "piscar" como inativo.
-
-É um sinal **tolerante a falhas e apenas informativo**: se a publicação falhar, apenas é logada e se recompõe no ciclo seguinte; e o `ultimo_heartbeat` só alimenta o aviso "nenhum painel ativo" ao chamar — **não bloqueia** o atendimento.
-
-> O **ping SSE** (`:ping` a cada 15s em `PainelSseService.enviarPingSse`) é um mecanismo com propósito próprio — forçar uma escrita no socket para o servidor detectar que o browser desconectou — mas está **ligado** ao liveness: quando o ping falha, dispara o `cleanup`, que publica `online=false` e faz o `HeartbeatListener` gravar `ultimo_heartbeat = null`. Ou seja, é o ping que, na prática, detecta a saída do painel e aciona a marcação de offline. O que o diferencia do `HeartbeatPublisher` é o papel: o ping detecta **desconexão** (evento), o publisher **renova** o liveness de quem segue conectado (periódico).
-
-### Prioridade na queue JMS
-
-A prioridade é gerenciada pelo broker via propriedade `JMSPriority` da mensagem na queue `agencia.<id>.fila`:
-
-```
-  queue JMS: agencia.<id>.fila
-  │
-  ├── prioridade 9 (agendados)  ──► consumidos primeiro pelo receiveSelected
-  │
-  └── prioridade 4 (espontâneos) ──► consumidos após os agendados
-```
-
-O selector JMS filtra por permissão do atendente:
-```
-permissao IN ('basica', 'normal', 'especial')
-```
-
-Agendados sempre têm prioridade sobre espontâneos (prioridade JMS mais alta).
-Dentro da mesma prioridade, o broker entrega na ordem de chegada (FIFO).
