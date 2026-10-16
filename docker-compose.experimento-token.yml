@@ -1,0 +1,29 @@
+# Override de EXPERIMENTO para observar expiração de token/sessão no app-painel.
+# NÃO usar em produção.
+#
+# Uso (sempre com os DOIS arquivos, e com volume do Keycloak zerado):
+#   docker compose -f docker-compose.yml -f docker-compose.experimento-token.yml down -v
+#   docker compose -f docker-compose.yml -f docker-compose.experimento-token.yml up -d --build
+#
+# O `down -v` é ESSENCIAL: o Keycloak só reimporta o realm (com os tempos curtos)
+# num banco vazio. Sem zerar o volume, os tempos de sessão não mudam.
+#
+# Tempos aplicados neste experimento:
+#   - Renovação no front (app-painel) ....... 1 min  (VITE_TOKEN_REFRESH_MS=60000)
+#   - accessTokenLifespan ................... 5 min  (realm de experimento)
+#   - ssoSessionIdleTimeout ................. 3 min  (realm de experimento)
+#   - ssoSessionMaxLifespan ................. 7 min  (realm de experimento)
+
+services:
+  keycloak:
+    volumes:
+      # Substitui o realm real pelo de experimento (mesmo path de destino no container).
+      - ./infra/keycloak/realm-export.experimento-token.json:/opt/keycloak/data/import/realm-export.json
+      - ./infra/keycloak/themes/painel:/opt/keycloak/themes/painel
+      - ./infra/keycloak/themes/atendimento:/opt/keycloak/themes/atendimento
+
+  app-painel:
+    build:
+      context: ./app-painel
+      args:
+        VITE_TOKEN_REFRESH_MS: "60000"

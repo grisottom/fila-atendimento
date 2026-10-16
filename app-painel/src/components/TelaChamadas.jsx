@@ -10,6 +10,10 @@ const blinkKeyframes = `
 
 const API_URL = import.meta.env.VITE_API_PAINEL_URL || "";
 
+// Intervalo de renovação proativa do token (ms). Default 10 min; sobrescrevível
+// via VITE_TOKEN_REFRESH_MS para experimentos (ex.: 60000 = 1 min).
+const TOKEN_REFRESH_MS = Number(import.meta.env.VITE_TOKEN_REFRESH_MS) || 10 * 60 * 1000;
+
 export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, username }) {
   const [chamadas, setChamadas] = useState([]);
   const [historico, setHistorico] = useState([]);
@@ -18,13 +22,13 @@ export default function TelaChamadas({ agenciaId, painelNumero, onDesativar, use
   useEffect(() => {
     conectarSSE();
 
-    // Renova o token a cada 10 min para manter a sessão do Keycloak ativa
-    // (evita expiração do refresh token por SSO Session Idle de 30 min)
+    // Renova o token periodicamente (TOKEN_REFRESH_MS, default 10 min) para manter
+    // a sessão do Keycloak ativa (evita expiração por SSO Session Idle de 30 min).
     const refreshInterval = setInterval(() => {
       keycloak.updateToken(300).catch(() => {
         keycloak.logout();
       });
-    }, 10 * 60 * 1000);
+    }, TOKEN_REFRESH_MS);
 
     return () => {
       clearInterval(refreshInterval);
