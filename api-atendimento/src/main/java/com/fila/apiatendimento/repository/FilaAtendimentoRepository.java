@@ -45,4 +45,19 @@ public interface FilaAtendimentoRepository extends JpaRepository<FilaAtendimento
     List<FilaAtendimento> findByPublicadoNoBrokerFalseAndStatus(String status);
 
     Optional<FilaAtendimento> findByTriagemUuid(java.util.UUID triagemUuid);
+
+    /**
+     * Agendados RETIDOS pela pré-triagem (status AGENDADO_FUTURO), ordenados por
+     * horário agendado ASC. O OutboxPublisher percorre nessa ordem e publica os
+     * elegíveis, para que o lote liberado no mesmo ciclo entre na fila JMS na
+     * ordem de horário (a fila é FIFO entre mensagens de mesma prioridade).
+     */
+    List<FilaAtendimento> findByStatusOrderByHorarioAgendadoAsc(String status);
+
+    /**
+     * Conta itens "em curso" (CHAMANDO/EM_ATENDIMENTO) de uma agência. Usado pelo
+     * gatilho "agência parada" da pré-triagem: zero → ninguém sendo atendido, pode
+     * liberar os retidos sem furar a fila de ninguém.
+     */
+    long countByAgenciaIdAndStatusIn(String agenciaId, List<String> statuses);
 }

@@ -6,6 +6,31 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "fila_atendimento")
 public class FilaAtendimento {
+
+    /** Status normal de item pronto para ser chamado (publicado na fila do broker). */
+    public static final String STATUS_AGUARDANDO = "AGUARDANDO";
+
+    /**
+     * Status de item de agendamento RETIDO pela pré-triagem: a pessoa foi
+     * recepcionada com muita antecedência (antecedência &gt; 2 × intervalo da
+     * agenda), então o item recebe senha e é persistido, mas NÃO é publicado na
+     * fila do broker ainda. O {@code OutboxPublisher} o publica (mudando para
+     * {@link #STATUS_AGUARDANDO}) quando entra na janela do horário ou quando a
+     * agência está parada (ninguém CHAMANDO/EM_ATENDIMENTO).
+     */
+    public static final String STATUS_AGENDADO_FUTURO = "AGENDADO_FUTURO";
+
+    // Categorias de prioridade (atendimento prioritário). O nível JMS (9/8/7/6/4)
+    // é derivado da categoria + agendado/espontâneo na publicação.
+    /** Sem prioridade legal: atendimento comum (nível JMS 6 agendado / 4 espontâneo). */
+    public static final String PRIORIDADE_NENHUMA = "NENHUMA";
+    /** Prioridade por lei (60-79, deficiência, TEA, gestante, etc.): nível 8/7. */
+    public static final String PRIORIDADE_POR_LEI = "POR_LEI";
+    /** Prioridade especial (80+ anos): nível 9. */
+    public static final String PRIORIDADE_ESPECIAL = "ESPECIAL";
+    /** Emergência médica: nível 9 (topo, junto com especial). */
+    public static final String PRIORIDADE_EMERGENCIA = "EMERGENCIA";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
@@ -36,6 +61,9 @@ public class FilaAtendimento {
     private LocalDateTime horarioChegada;
 
     private String status;
+
+    @Column(name = "categoria_prioridade", nullable = false)
+    private String categoriaPrioridade = PRIORIDADE_NENHUMA;
 
     @Column(name = "estacao_id")
     private Integer estacaoId;
@@ -86,6 +114,8 @@ public class FilaAtendimento {
     public void setHorarioChegada(LocalDateTime horarioChegada) { this.horarioChegada = horarioChegada; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getCategoriaPrioridade() { return categoriaPrioridade; }
+    public void setCategoriaPrioridade(String categoriaPrioridade) { this.categoriaPrioridade = categoriaPrioridade; }
     public Integer getEstacaoId() { return estacaoId; }
     public void setEstacaoId(Integer estacaoId) { this.estacaoId = estacaoId; }
     public String getAtendenteUsername() { return atendenteUsername; }

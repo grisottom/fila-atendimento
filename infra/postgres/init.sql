@@ -43,7 +43,11 @@ CREATE TABLE paineis_servicos (
 
 CREATE TABLE pessoa (
     cpf BIGINT PRIMARY KEY,
-    nome VARCHAR(200) NOT NULL
+    nome VARCHAR(200) NOT NULL,
+    -- Usada para derivar a prioridade por idade na triagem: 80+ → ESPECIAL,
+    -- 60-79 → POR_LEI. Nullable: pessoas sem data cadastrada não recebem
+    -- prioridade por idade (só manual, se marcada).
+    data_nascimento DATE
 );
 
 CREATE TABLE agendamento (
@@ -65,6 +69,10 @@ CREATE TABLE fila_atendimento (
     horario_agendado TIMESTAMP,
     horario_chegada TIMESTAMP NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'AGUARDANDO',
+    -- Categoria de prioridade do atendimento (atendimento prioritário). O nível
+    -- JMS (9/8/7/6/4) é derivado disto + agendado/espontâneo na publicação.
+    categoria_prioridade VARCHAR(20) NOT NULL DEFAULT 'NENHUMA'
+        CHECK (categoria_prioridade IN ('NENHUMA', 'POR_LEI', 'ESPECIAL', 'EMERGENCIA')),
     estacao_id INTEGER REFERENCES estacao(id),
     atendente_username VARCHAR(100),
     horario_chamada TIMESTAMP,
@@ -144,53 +152,58 @@ INSERT INTO paineis_servicos (painel_id, servico_id) VALUES
 -- DADOS DE TESTE: PESSOAS E AGENDAMENTOS
 -- ===========================================
 
-INSERT INTO pessoa (cpf, nome) VALUES
-(11122233344, 'Maria Silva'),
-(22233344455, 'João Santos'),
-(33344455566, 'Ana Oliveira'),
-(44455566677, 'Carlos Souza'),
-(55566677788, 'Fernanda Lima'),
-(66677788899, 'Roberto Costa'),
-(77788899900, 'Juliana Pereira'),
-(88899900011, 'Marcos Almeida'),
-(99900011122, 'Patricia Rocha'),
-(10011122233, 'Lucas Ferreira'),
-(11122233300, 'Beatriz Mendes'),
-(22233344411, 'Ricardo Gomes'),
-(33344455522, 'Camila Ribeiro'),
-(44455566633, 'Eduardo Martins'),
-(55566677744, 'Larissa Barbosa'),
-(66677788855, 'Thiago Cardoso'),
-(77788899966, 'Amanda Nascimento'),
-(88899900077, 'Felipe Araujo'),
-(99900011188, 'Gabriela Dias'),
-(10011122299, 'Daniel Monteiro');
+-- data_nascimento cobre as faixas de prioridade por idade:
+--   80+  → ESPECIAL  (nascidos até ~1945)
+--   60-79 → POR_LEI  (nascidos ~1947-1966)
+--   <60  → comum     (nascidos 1967+)
+-- Alguns propositalmente NULL (sem data) para testar "sem prioridade por idade".
+INSERT INTO pessoa (cpf, nome, data_nascimento) VALUES
+(11122233344, 'Maria Silva',        '1940-03-12'), -- 80+ ESPECIAL
+(22233344455, 'João Santos',        '1944-11-05'), -- 80+ ESPECIAL
+(33344455566, 'Ana Oliveira',       '1955-07-20'), -- 60-79 POR_LEI
+(44455566677, 'Carlos Souza',       '1962-01-30'), -- 60-79 POR_LEI
+(55566677788, 'Fernanda Lima',      '1980-09-15'), -- comum
+(66677788899, 'Roberto Costa',      '1975-05-10'), -- comum
+(77788899900, 'Juliana Pereira',    '1990-12-01'), -- comum
+(88899900011, 'Marcos Almeida',     NULL),         -- sem data
+(99900011122, 'Patricia Rocha',     '1958-04-22'), -- 60-79 POR_LEI
+(10011122233, 'Lucas Ferreira',     '1995-08-08'), -- comum
+(11122233300, 'Beatriz Mendes',     '1938-02-18'), -- 80+ ESPECIAL
+(22233344411, 'Ricardo Gomes',      '1966-10-03'), -- 60-79 POR_LEI
+(33344455522, 'Camila Ribeiro',     '1985-06-25'), -- comum
+(44455566633, 'Eduardo Martins',    NULL),         -- sem data
+(55566677744, 'Larissa Barbosa',    '2000-03-14'), -- comum
+(66677788855, 'Thiago Cardoso',     '1972-11-28'), -- comum
+(77788899966, 'Amanda Nascimento',  '1950-09-09'), -- 60-79 POR_LEI
+(88899900077, 'Felipe Araujo',      '1943-07-07'), -- 80+ ESPECIAL
+(99900011188, 'Gabriela Dias',      '1988-01-19'), -- comum
+(10011122299, 'Daniel Monteiro',    '1963-12-30'); -- 60-79 POR_LEI
 
--- Agendamentos para agencia-01 (hoje)
+-- Agendamentos para agencia-01 (hoje) — intervalo de 15 min entre horários
 INSERT INTO agendamento (cpf, agencia_id, servico_id, data_hora) VALUES
 (11122233344, 'agencia-01', 'servico-basico', CURRENT_DATE + INTERVAL '9 hours'),
-(22233344455, 'agencia-01', 'servico-normal-01', CURRENT_DATE + INTERVAL '9 hours 30 minutes'),
-(33344455566, 'agencia-01', 'servico-normal-02', CURRENT_DATE + INTERVAL '10 hours'),
-(44455566677, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '10 hours 30 minutes'),
-(55566677788, 'agencia-01', 'servico-basico', CURRENT_DATE + INTERVAL '11 hours'),
-(66677788899, 'agencia-01', 'servico-normal-01', CURRENT_DATE + INTERVAL '11 hours 30 minutes'),
-(77788899900, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '13 hours'),
-(88899900011, 'agencia-01', 'servico-basico', CURRENT_DATE + INTERVAL '14 hours'),
-(99900011122, 'agencia-01', 'servico-normal-02', CURRENT_DATE + INTERVAL '14 hours 30 minutes'),
-(10011122233, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '15 hours');
+(22233344455, 'agencia-01', 'servico-normal-01', CURRENT_DATE + INTERVAL '9 hours 15 minutes'),
+(33344455566, 'agencia-01', 'servico-normal-02', CURRENT_DATE + INTERVAL '9 hours 30 minutes'),
+(44455566677, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '9 hours 45 minutes'),
+(55566677788, 'agencia-01', 'servico-basico', CURRENT_DATE + INTERVAL '10 hours'),
+(66677788899, 'agencia-01', 'servico-normal-01', CURRENT_DATE + INTERVAL '10 hours 15 minutes'),
+(77788899900, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '10 hours 30 minutes'),
+(88899900011, 'agencia-01', 'servico-basico', CURRENT_DATE + INTERVAL '10 hours 45 minutes'),
+(99900011122, 'agencia-01', 'servico-normal-02', CURRENT_DATE + INTERVAL '11 hours'),
+(10011122233, 'agencia-01', 'servico-especial-01', CURRENT_DATE + INTERVAL '11 hours 15 minutes');
 
--- Agendamentos para agencia-02 (hoje)
+-- Agendamentos para agencia-02 (hoje) — intervalo de 15 min entre horários
 INSERT INTO agendamento (cpf, agencia_id, servico_id, data_hora) VALUES
 (11122233300, 'agencia-02', 'servico-basico', CURRENT_DATE + INTERVAL '9 hours'),
-(22233344411, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '9 hours 30 minutes'),
-(33344455522, 'agencia-02', 'servico-normal-02', CURRENT_DATE + INTERVAL '10 hours'),
-(44455566633, 'agencia-02', 'servico-especial-01', CURRENT_DATE + INTERVAL '10 hours 30 minutes'),
-(55566677744, 'agencia-02', 'servico-basico', CURRENT_DATE + INTERVAL '11 hours'),
-(66677788855, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '11 hours 30 minutes'),
-(77788899966, 'agencia-02', 'servico-normal-02', CURRENT_DATE + INTERVAL '13 hours'),
-(88899900077, 'agencia-02', 'servico-basico', CURRENT_DATE + INTERVAL '14 hours'),
-(99900011188, 'agencia-02', 'servico-especial-01', CURRENT_DATE + INTERVAL '14 hours 30 minutes'),
-(10011122299, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '15 hours');
+(22233344411, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '9 hours 15 minutes'),
+(33344455522, 'agencia-02', 'servico-normal-02', CURRENT_DATE + INTERVAL '9 hours 30 minutes'),
+(44455566633, 'agencia-02', 'servico-especial-01', CURRENT_DATE + INTERVAL '9 hours 45 minutes'),
+(55566677744, 'agencia-02', 'servico-basico', CURRENT_DATE + INTERVAL '10 hours'),
+(66677788855, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '10 hours 15 minutes'),
+(77788899966, 'agencia-02', 'servico-normal-02', CURRENT_DATE + INTERVAL '10 hours 30 minutes'),
+(88899900077, 'agencia-02', 'servico-basico', CURRENT_DATE + INTERVAL '10 hours 45 minutes'),
+(99900011188, 'agencia-02', 'servico-especial-01', CURRENT_DATE + INTERVAL '11 hours'),
+(10011122299, 'agencia-02', 'servico-normal-01', CURRENT_DATE + INTERVAL '11 hours 15 minutes');
 
 -- ===========================================
 -- DADOS INICIAIS: ATENDENTES E PERMISSÕES

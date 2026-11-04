@@ -16,6 +16,7 @@ import jakarta.jms.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jms.core.JmsTemplate;
@@ -43,6 +44,11 @@ public class TriagemService {
     private final ServicoRepository servicoRepository;
     private final JmsTemplate jmsQueueTemplate;
 
+    // Intervalo típico (min) entre horários da agenda. A janela de retenção da
+    // pré-triagem é 2 × este valor. Ver application.yml (atendimento.intervalo-agendamento-min).
+    @Value("${atendimento.intervalo-agendamento-min:15}")
+    private int intervaloAgendamentoMin;
+
     public TriagemService(PessoaRepository pessoaRepository,
                           AgendamentoRepository agendamentoRepository,
                           FilaAtendimentoRepository filaRepository,
@@ -59,9 +65,9 @@ public class TriagemService {
     public TriagemResponse recepcionar(TriagemRequest request) {
         Long cpf = Objects.requireNonNull(request.cpf(), "CPF não pode ser nulo");
 
-        String nomePessoa = pessoaRepository.findById(cpf)
-                .map(p -> p.getNome())
-                .orElse(request.nomePessoa());
+        Pessoa pessoa = pessoaRepository.findById(cpf).orElse(null);
+        String nomePessoa = pessoa != null ? pessoa.getNome() : request.nomePessoa();
+        java.time.LocalDate dataNascimento = pessoa != null ? pessoa.getDataNascimento() : null;
 
         LocalDateTime inicioDia = LocalDate.now().atStartOfDay();
         LocalDateTime fimDia = inicioDia.plusDays(1);
@@ -76,21 +82,55 @@ public class TriagemService {
         String senha = gerarSenha();
         Integer posicao = filaRepository.findMaxPosicaoFila(request.agenciaId()) + 1;
 
+        LocalDateTime horarioAgendado = agendamento != null ? agendamento.getDataHora() : null;
+        LocalDateTime agora = LocalDateTime.now();
+
         FilaAtendimento fila = new FilaAtendimento();
         fila.setAgenciaId(request.agenciaId());
         fila.setCpf(request.cpf());
         fila.setNomePessoa(nomePessoa);
         fila.setServicoId(request.servicoId());
         fila.setSenha(senha);
-        fila.setHorarioAgendado(agendamento != null ? agendamento.getDataHora() : null);
-        fila.setHorarioChegada(LocalDateTime.now());
-        fila.setStatus("AGUARDANDO");
+        fila.setHorarioAgendado(horarioAgendado);
+        fila.setHorarioChegada(agora);
         fila.setPosicaoFila(posicao);
 
         // UUID de correlação gerado AQUI, antes do insert. É ele que viaja na
         // mensagem do broker, então não dependemos da PK (IDENTITY) para publicar.
         java.util.UUID triagemUuid = java.util.UUID.randomUUID();
         fila.setTriagemUuid(triagemUuid);
+
+        // PRIORIDADE: combina idade (data de nascimento) com os marcadores manuais da
+        // triagem (por lei / emergência). Vale a MAIOR prioridade. A categoria é
+        // persistida; o nível JMS (9/8/7/6/4) é derivado dela + agendado na publicação.
+        boolean porLei = Boolean.TRUE.equals(request.prioridadePorLei());
+        boolean emergencia = Boolean.TRUE.equals(request.emergenciaMedica());
+        String categoria = PrioridadeCalculator.categoria(dataNascimento, agora.toLocalDate(), porLei, emergencia);
+        fila.setCategoriaPrioridade(categoria);
+
+        boolean agendado = agendamento != null;
+        int nivelPrioridade = PrioridadeCalculator.nivelJms(categoria, agendado);
+
+        // PRÉ-TRIAGEM: um agendado que chega com muita antecedência (antecedência >
+        // janela = 2 × intervalo) é RETIDO — recebe senha e é persistido como
+        // AGENDADO_FUTURO, mas NÃO é publicado na fila agora. Evita que um antecipado
+        // grosseiro fure a fila de quem tem horário mais próximo. O OutboxPublisher o
+        // publica quando ele entra na janela (ou quando a agência está parada).
+        // Exceção: prioridade ESPECIAL/EMERGENCIA nunca é retida (entra na hora).
+        if (deveReterAgendado(horarioAgendado, agora, categoria)) {
+            fila.setStatus(FilaAtendimento.STATUS_AGENDADO_FUTURO);
+            fila.setPublicadoNoBroker(false);
+            filaRepository.save(fila);
+            log.info("Pré-triagem: agendado retido (AGENDADO_FUTURO) triagemUuid={} horario={} chegada={} (janela={}min)",
+                    triagemUuid, horarioAgendado, agora, 2 * intervaloAgendamentoMin);
+
+            if (agendamento != null) {
+                agendamentoRepository.delete(agendamento);
+            }
+            return new TriagemResponse(senha, nomePessoa, request.servicoId(), horarioAgendado);
+        }
+
+        fila.setStatus(FilaAtendimento.STATUS_AGUARDANDO);
 
         // Outbox transacional com UMA única escrita: publicamos primeiro (o UUID já
         // existe em memória) e definimos a flag conforme o resultado. O save único
@@ -103,14 +143,7 @@ public class TriagemService {
                     ? servicoRepository.findById(servicoId).map(s -> s.getPermissaoExigida()).orElse("basica")
                     : "basica";
 
-            // FAULT INJECTION (publish): desativada — simulava falha ao publicar no broker.
-            // if (faultCountTriagem.incrementAndGet() <= 1) {
-            //     log.warn("[FAULT] Simulando falha ao publicar no broker (item #{}) para triagemUuid={}", faultCountTriagem.get(), triagemUuid);
-            //     throw new RuntimeException("[FAULT] Falha ao publicar no broker");
-            // } else {
-            //     publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
-            // }
-            publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, agendamento != null);
+            publicarNaQueueAgencia(request.agenciaId(), triagemUuid, permissao, nivelPrioridade);
             fila.setPublicadoNoBroker(true);
         } catch (Exception e) {
             fila.setPublicadoNoBroker(false);
@@ -136,6 +169,33 @@ public class TriagemService {
 
         return new TriagemResponse(senha, nomePessoa, request.servicoId(),
                 agendamento != null ? agendamento.getDataHora() : null);
+    }
+
+    /**
+     * Decide se um agendado deve ser RETIDO (não publicado agora) pela pré-triagem.
+     *
+     * Retém quando a antecedência da chegada em relação ao horário agendado é maior
+     * que a janela (2 × intervalo da agenda). Espontâneos (sem horário agendado) e
+     * agendados dentro da janela ou já vencidos NÃO são retidos (publicam normal).
+     *
+     * Prioridade ESPECIAL/EMERGENCIA nunca é retida (entra na fila na hora, mesmo
+     * muito adiantada).
+     *
+     * @param horarioAgendado horário do agendamento, ou null para espontâneo.
+     * @param agora           instante da triagem (chegada).
+     * @param categoria       categoria de prioridade do atendimento.
+     */
+    private boolean deveReterAgendado(LocalDateTime horarioAgendado, LocalDateTime agora, String categoria) {
+        if (horarioAgendado == null) {
+            return false; // espontâneo: publica normal
+        }
+        if (PrioridadeCalculator.ignoraRetencao(categoria)) {
+            return false; // especial/emergência: nunca retém
+        }
+        LocalDateTime inicioJanela = horarioAgendado.minusMinutes(2L * intervaloAgendamentoMin);
+        // Retém somente se a chegada é ANTES do início da janela (muito adiantada).
+        // Dentro da janela ou com horário já vencido, agora >= inicioJanela → publica.
+        return agora.isBefore(inicioJanela);
     }
 
     /**
@@ -175,15 +235,16 @@ public class TriagemService {
                 ? servicoRepository.findById(fila.getServicoId()).map(s -> s.getPermissaoExigida()).orElse("basica")
                 : "basica";
 
-        publicarNaQueueAgencia(fila.getAgenciaId(), fila.getTriagemUuid(), permissao, fila.getHorarioAgendado() != null);
-        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {} (tentativas_dlq zerado)",
-                fila.getId(), fila.getTriagemUuid(), fila.getAgenciaId());
+        int prioridade = PrioridadeCalculator.nivelJms(
+                fila.getCategoriaPrioridade(), fila.getHorarioAgendado() != null);
+        publicarNaQueueAgencia(fila.getAgenciaId(), fila.getTriagemUuid(), permissao, prioridade);
+        log.info("Republicação manual: filaId={} triagemUuid={} recolocado na fila da agência {} (prioridade={}, tentativas_dlq zerado)",
+                fila.getId(), fila.getTriagemUuid(), fila.getAgenciaId(), prioridade);
     }
 
     void publicarNaQueueAgencia(String agenciaId, java.util.UUID triagemUuid,
-                                            String permissao, boolean agendado) {
+                                            String permissao, int prioridade) {
         String queueAgencia = "agencia." + agenciaId + ".fila";
-        int prioridade = agendado ? 9 : 4;
         String uuidStr = triagemUuid.toString();
 
         jmsQueueTemplate.send(queueAgencia, session -> {
@@ -222,7 +283,8 @@ public class TriagemService {
 
     public List<AtendimentoResponse> listarAtendimentosDoDiaEsperando(String agenciaId) {
         return filaRepository.findByAgenciaIdAndStatusIn(agenciaId,
-                        List.of("AGUARDANDO", "CANCELADO", "AUSENTE", DlqReprocessor.STATUS_FALHA_DLQ))
+                        List.of("AGUARDANDO", FilaAtendimento.STATUS_AGENDADO_FUTURO,
+                                "CANCELADO", "AUSENTE", DlqReprocessor.STATUS_FALHA_DLQ))
                 .stream()
                 .map(f -> new AtendimentoResponse(f.getId(), f.getSenha(), f.getCpf(), f.getNomePessoa(),
                         f.getServicoId(), f.getStatus(), null, null, f.getHorarioChegada()))
@@ -239,5 +301,22 @@ public class TriagemService {
         filaRepository.save(fila);
 
         return new TriagemResponse(fila.getSenha(), fila.getNomePessoa(), servicoId, fila.getHorarioAgendado());
+    }
+
+    /**
+     * Busca a pessoa por CPF para a triagem (nome + data de nascimento + idade).
+     * A idade alimenta o indicador read-only de prioridade por idade na tela.
+     * Retorna null se não houver pessoa cadastrada com o CPF.
+     */
+    public com.fila.apiatendimento.dto.PessoaResponse buscarPessoa(Long cpf) {
+        return pessoaRepository.findById(cpf)
+                .map(p -> {
+                    Integer idade = p.getDataNascimento() != null
+                            ? java.time.Period.between(p.getDataNascimento(), LocalDate.now()).getYears()
+                            : null;
+                    return new com.fila.apiatendimento.dto.PessoaResponse(
+                            p.getCpf(), p.getNome(), p.getDataNascimento(), idade);
+                })
+                .orElse(null);
     }
 }

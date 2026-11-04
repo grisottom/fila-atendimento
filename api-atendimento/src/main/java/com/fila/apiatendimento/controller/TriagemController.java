@@ -1,6 +1,5 @@
 package com.fila.apiatendimento.controller;
 
-import com.fila.apiatendimento.dto.AgendamentoResponse;
 import com.fila.apiatendimento.dto.AtendimentoResponse;
 import com.fila.apiatendimento.dto.TriagemRequest;
 import com.fila.apiatendimento.dto.TriagemResponse;
@@ -29,6 +28,13 @@ public class TriagemController {
     @PutMapping("/atualizar/{id}")
     public ResponseEntity<TriagemResponse> atualizar(@PathVariable Integer id, @RequestBody java.util.Map<String, String> body) {
         return ResponseEntity.ok(triagemService.atualizarServico(id, body.get("servicoId")));
+    }
+
+    @GetMapping("/pessoa/{cpf}")
+    public ResponseEntity<com.fila.apiatendimento.dto.PessoaResponse> buscarPessoa(@PathVariable Long cpf) {
+        var pessoa = triagemService.buscarPessoa(cpf);
+        if (pessoa == null) return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(pessoa);
     }
 
     @GetMapping("/agendamentos/{agenciaId}")

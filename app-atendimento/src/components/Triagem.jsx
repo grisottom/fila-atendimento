@@ -40,6 +40,10 @@ export default function Triagem() {
   const [nomePessoa, setNomePessoa] = useState("");
   const [agenciaId, setAgenciaId] = useState(localStorage.getItem(getStorageKey()) || getAgenciaDoToken());
   const [servicoId, setServicoId] = useState("");
+  const [prioridadePorLei, setPrioridadePorLei] = useState(false);
+  const [emergenciaMedica, setEmergenciaMedica] = useState(false);
+  const [idade, setIdade] = useState("");
+  const [avisoIdade, setAvisoIdade] = useState("");
   const [atendimentoId, setAtendimentoId] = useState(null);
   const [resultado, setResultado] = useState(null);
   const [erro, setErro] = useState("");
@@ -81,12 +85,40 @@ export default function Triagem() {
   }
 
 
+  // Consulta a pessoa pelo CPF (onBlur) para preencher nome + indicador de idade.
+  // Opção A: a idade é apenas informativa (read-only) — NÃO marca os checkboxes de
+  // prioridade; a classificação por idade é feita no backend.
+  async function consultarPessoa() {
+    const cpfNum = Number(cpf);
+    if (!cpf || Number.isNaN(cpfNum)) { setIdade(""); setAvisoIdade(""); return; }
+    try {
+      const p = await api.get(`/api/triagem/pessoa/${cpfNum}`);
+      if (!p) { setIdade(""); setAvisoIdade(""); return; }
+      if (!nomePessoa && p.nome) setNomePessoa(p.nome);
+      if (p.idade != null) {
+        setIdade(String(p.idade));
+        if (p.idade >= 80) setAvisoIdade("Prioridade especial (80+)");
+        else if (p.idade >= 60) setAvisoIdade("Prioridade por lei (60-79)");
+        else setAvisoIdade("");
+      } else {
+        setIdade(""); setAvisoIdade("");
+      }
+    } catch { setIdade(""); setAvisoIdade(""); }
+  }
+
   const servicos = [
     { id: "servico-basico", nome: "Serviço Básico" },
     { id: "servico-normal-01", nome: "Serviço Normal 01" },
     { id: "servico-normal-02", nome: "Serviço Normal 02" },
     { id: "servico-especial-01", nome: "Serviço Especial 01" },
   ];
+
+  // Rótulo amigável do status. AGENDADO_FUTURO é o item de agendamento retido pela
+  // pré-triagem (chegou muito antes do horário): ainda não foi publicado na fila,
+  // aguardando entrar na janela do horário agendado.
+  function rotuloStatus(status) {
+    return status === "AGENDADO_FUTURO" ? "Aguardando horário" : status;
+  }
 
   function selecionarAtendimento(a) {
     setCpf(String(a.cpf));
@@ -97,12 +129,27 @@ export default function Triagem() {
 
   function cancelarAlteracao() {
     setCpf(""); setNomePessoa(""); setServicoId(""); setAtendimentoId(null);
+    setPrioridadePorLei(false); setEmergenciaMedica(false);
+    setIdade(""); setAvisoIdade("");
     cpfRef.current?.focus();
   }
 
   async function recepcionar(e) {
     e.preventDefault();
     setErro(""); setResultado(null);
+
+    // Confirmação do atendimento prioritário antes de submeter (só em nova recepção,
+    // quando algum marcador de prioridade está selecionado).
+    if (!atendimentoId && (prioridadePorLei || emergenciaMedica)) {
+      const marcados = [
+        prioridadePorLei && "Prioridade por lei",
+        emergenciaMedica && "Emergência médica",
+      ].filter(Boolean).join(" e ");
+      if (!window.confirm(`Confirmar atendimento prioritário com a pessoa?\n\n${marcados}`)) {
+        return;
+      }
+    }
+
     localStorage.setItem(getStorageKey(), agenciaId);
     try {
       let res;
@@ -111,6 +158,7 @@ export default function Triagem() {
       } else {
         res = await api.post("/api/triagem/recepcionar", {
           cpf: Number(cpf), nomePessoa, agenciaId, servicoId,
+          prioridadePorLei, emergenciaMedica,
         });
         const entry = { ...res, hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
         const novo = [entry, ...historico];
@@ -147,6 +195,8 @@ export default function Triagem() {
   function fecharDialog() {
     dialogRef.current?.close();
     setCpf(""); setNomePessoa(""); setServicoId(""); setAtendimentoId(null);
+    setPrioridadePorLei(false); setEmergenciaMedica(false);
+    setIdade(""); setAvisoIdade("");
     cpfRef.current?.focus();
     setHistorico(carregarHistorico());
   }
@@ -176,11 +226,16 @@ export default function Triagem() {
         </div>
         <div>
           <label>CPF: </label>
-          <input ref={cpfRef} value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="11122233344" required disabled={!!atendimentoId} />
+          <input ref={cpfRef} value={cpf} onChange={(e) => setCpf(e.target.value)} onBlur={consultarPessoa} placeholder="11122233344" required disabled={!!atendimentoId} />
         </div>
         <div>
           <label>Nome: </label>
           <input value={nomePessoa} onChange={(e) => setNomePessoa(e.target.value)} placeholder="Nome da pessoa" style={{ minWidth: 200 }} required />
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <label>Idade: </label>
+          <input value={idade} disabled style={{ width: 50, background: "#f0f0f0" }} />
+          {avisoIdade && <span style={{ marginLeft: 8, color: "#1976d2", fontWeight: "bold" }}>{avisoIdade}</span>}
         </div>
         <div>
           <label>Serviço: </label>
@@ -188,6 +243,16 @@ export default function Triagem() {
             <option value="">Selecione</option>
             {servicos.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
           </select>
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <label title="Pessoa com deficiência, TEA, gestante, lactante, acompanhante de criança de colo, obeso ou mobilidade reduzida. Idosos (60+) são classificados automaticamente pela data de nascimento.">
+            <input type="checkbox" checked={prioridadePorLei} onChange={(e) => setPrioridadePorLei(e.target.checked)} disabled={!!atendimentoId} />
+            {" "}Prioridade por lei
+          </label>
+          <label style={{ marginLeft: 16 }} title="Atendimento no topo da fila, agendado ou não.">
+            <input type="checkbox" checked={emergenciaMedica} onChange={(e) => setEmergenciaMedica(e.target.checked)} disabled={!!atendimentoId} />
+            {" "}Emergência médica
+          </label>
         </div>
         <div>
           <label>Id Atendimento: </label>
@@ -237,7 +302,7 @@ export default function Triagem() {
               {esperandoAtendimento.map((a) => (
                 <tr key={a.id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "6px 10px" }}>
-                    {a.status === "AGUARDANDO" ? (
+                    {a.status === "AGUARDANDO" || a.status === "AGENDADO_FUTURO" ? (
                       a.id
                     ) : (
                       <a href="#" onClick={(e) => { e.preventDefault(); selecionarAtendimento(a); }} style={{ color: "#1976d2", cursor: "pointer" }}>{a.id}</a>
@@ -247,7 +312,7 @@ export default function Triagem() {
                   <td style={{ padding: "6px 10px" }}>{a.cpf}</td>
                   <td style={{ padding: "6px 10px" }}>{a.nomePessoa}</td>
                   <td style={{ padding: "6px 10px" }}>{servicos.find(s => s.id === a.servicoId)?.nome || a.servicoId}</td>
-                  <td style={{ padding: "6px 10px", color: a.status === "FALHA_DLQ" ? "#d32f2f" : a.status === "AUSENTE" ? "orange" : "inherit", fontWeight: a.status === "FALHA_DLQ" ? "bold" : "normal" }}>{a.status}</td>
+                  <td style={{ padding: "6px 10px", color: a.status === "FALHA_DLQ" ? "#d32f2f" : a.status === "AUSENTE" ? "orange" : a.status === "AGENDADO_FUTURO" ? "#1976d2" : "inherit", fontWeight: a.status === "FALHA_DLQ" ? "bold" : "normal", fontStyle: a.status === "AGENDADO_FUTURO" ? "italic" : "normal" }}>{rotuloStatus(a.status)}</td>
                   <td style={{ padding: "6px 10px" }}>{a.horarioChegada ? new Date(a.horarioChegada).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
                   <td style={{ padding: "6px 10px" }}>
                     {(a.status === "AGUARDANDO" || a.status === "FALHA_DLQ") && (

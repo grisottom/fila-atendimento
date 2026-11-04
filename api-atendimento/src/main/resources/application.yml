@@ -37,6 +37,12 @@ atendimento:
   # Avaliado contra o contador PERSISTENTE no item (tentativas_dlq), pois o
   # JMSXDeliveryCount do broker reseta a cada ciclo de DLQ.
   dlq-max-reprocessos: 2
+  # Pré-triagem: intervalo típico (min) entre horários da agenda. A JANELA de
+  # retenção de agendados é derivada como 2 × este valor. Um agendado que chega
+  # com antecedência MAIOR que a janela fica retido (status AGENDADO_FUTURO) e só
+  # é publicado na fila quando entra na janela OU quando a agência está parada
+  # (ninguém CHAMANDO/EM_ATENDIMENTO). Env: ATENDIMENTO_INTERVALO_AGENDAMENTO_MIN.
+  intervalo-agendamento-min: 15
 
 logging:
   level:
