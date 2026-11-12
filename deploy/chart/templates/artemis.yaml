@@ -1,4 +1,38 @@
-{{- if not .Values.artemis.operator.enabled }}
+{{- /*
+Broker gerenciado pelo ActiveMQ Artemis Operator (arkmq-org / AMQ Broker, API broker.amq.io).
+Requer o operador instalado no cluster. O operador cria o StatefulSet "fila-artemis-ss", o PVC e
+os Services "fila-artemis-*-svc". A configuração padrão gerada pelo operador já tem o que as APIs
+usam: DLQ como dead-letter, auto-create de filas/endereços e wildcards (agencia.*.painel.*).
+*/}}
+apiVersion: broker.amq.io/v1beta1
+kind: ActiveMQArtemis
+metadata:
+  name: fila-artemis
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
+spec:
+  adminUser: {{ .Values.artemis.username | quote }}
+  adminPassword: {{ .Values.artemis.password | quote }}
+  deploymentPlan:
+    size: 1
+    persistenceEnabled: true
+    # exige usuário e senha (sem login anônimo)
+    requireLogin: true
+    storage:
+      size: {{ .Values.artemis.storage }}
+    resources:
+      {{- toYaml .Values.artemis.resources | nindent 6 }}
+  acceptors:
+    - name: all
+      port: 61616
+      protocols: all
+      # Sem isso o acceptor escuta só no hostname do pod; 0.0.0.0 evita depender
+      # de como o ztunnel (Istio ambient) entrega o tráfego ao pod.
+      bindToAllInterfaces: true
+  console:
+    expose: false
+---
+# Endereço estável que as APIs usam (tcp://fila-artemis:61616), apontando para o pod do operador
 apiVersion: v1
 kind: Service
 metadata:
@@ -7,63 +41,9 @@ metadata:
     {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
 spec:
   selector:
-    app.kubernetes.io/name: fila-artemis
+    ActiveMQArtemis: fila-artemis
+    application: fila-artemis-app
   ports:
     - name: core
       port: 61616
       targetPort: 61616
-    - name: console
-      port: 8161
-      targetPort: 8161
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: fila-artemis
-  labels:
-    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
-spec:
-  serviceName: fila-artemis
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: fila-artemis
-  template:
-    metadata:
-      labels:
-        {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 8 }}
-    spec:
-      securityContext:
-        fsGroup: 1001
-      containers:
-        - name: artemis
-          image: {{ .Values.artemis.image }}
-          env:
-            - name: ARTEMIS_USER
-              valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_USER } }
-            - name: ARTEMIS_PASSWORD
-              valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_PASSWORD } }
-            - name: ANONYMOUS_LOGIN
-              value: "false"
-          ports:
-            - containerPort: 61616
-            - containerPort: 8161
-          readinessProbe:
-            tcpSocket:
-              port: 61616
-            periodSeconds: 5
-            failureThreshold: 20
-          resources:
-            {{- toYaml .Values.artemis.resources | nindent 12 }}
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/artemis-instance
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: {{ .Values.artemis.storage }}
-{{- end }}

@@ -13,7 +13,7 @@ exposure:
 # Imagens construídas pela pipeline Tekton (monorepo => uma única tag, o hash do commit).
 # ATENÇÃO: a pipeline atualiza a linha "tag:" abaixo via sed. Mantenha UMA única chave "tag:" neste arquivo.
 image:
-  registry: k3d-my-registry:5000
+  registry: k3d-my-registry:5000/amq
   tag: "latest"
   pullPolicy: IfNotPresent
 
@@ -59,13 +59,9 @@ postgres:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { memory: 768Mi }
 
+# Broker gerenciado pelo ActiveMQ Artemis Operator (CR ActiveMQArtemis, broker.amq.io).
+# Requer o operador instalado no cluster.
 artemis:
-  # false: broker via StatefulSet com a imagem abaixo.
-  # true:  broker gerenciado pelo ActiveMQ Artemis Operator (CR ActiveMQArtemis, broker.amq.io).
-  #        Requer o operador instalado (examples/operators/install-operator-artemis.sh).
-  operator:
-    enabled: false
-  image: apache/activemq-artemis:2.33.0
   username: artemis
   password: artemis123
   storage: 1Gi
