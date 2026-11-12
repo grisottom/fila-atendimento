@@ -18,6 +18,9 @@ spec:
     persistenceEnabled: true
     # exige usuário e senha (sem login anônimo)
     requireLogin: true
+    extraMounts:
+      configMaps:
+        - fila-artemis-jolokia
     storage:
       size: {{ .Values.artemis.storage }}
     resources:
@@ -31,6 +34,29 @@ spec:
       bindToAllInterfaces: true
   console:
     expose: false
+  # O console (hawtio/Jolokia) só aceita origens listadas no jolokia-access.xml e recusa Origin https
+  # quando chega por HTTP (TLS termina no gateway). Sem isso a tela do console abre vazia.
+  env:
+    - name: JAVA_ARGS_APPEND
+      value: "-Djolokia.policyLocation=file:/amq/extra/configmaps/fila-artemis-jolokia/jolokia-access.xml"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fila-artemis-jolokia
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
+data:
+  jolokia-access.xml: |
+    <?xml version="1.0" encoding="utf-8"?>
+    <restrict>
+      <cors>
+        <allow-origin>*://{{ .Values.exposure.hosts.artemis }}*</allow-origin>
+        <allow-origin>*://fila-artemis-ss-0.fila-artemis-hdls-svc.{{ .Release.Namespace }}.svc.cluster.local*</allow-origin>
+        <ignore-scheme/>
+        <strict-checking/>
+      </cors>
+    </restrict>
 ---
 # Endereço estável que as APIs usam (tcp://fila-artemis:61616), apontando para o pod do operador
 apiVersion: v1
