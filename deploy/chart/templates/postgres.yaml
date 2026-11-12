@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fila-postgres-init
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-postgres") | nindent 4 }}
+data:
+  init.sql: |
+    {{- .Files.Get "files/init.sql" | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fila-postgres
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-postgres") | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: fila-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fila-postgres
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-postgres") | nindent 4 }}
+spec:
+  serviceName: fila-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fila-postgres
+  template:
+    metadata:
+      labels:
+        {{- include "fila.labels" (dict "root" . "name" "fila-postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          args: ["postgres", "-c", "max_connections=500"]
+          envFrom:
+            - secretRef:
+                name: fila-credentials
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init
+          configMap:
+            name: fila-postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}

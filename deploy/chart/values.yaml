@@ -1,0 +1,82 @@
+# Valores do ambiente local (k3d). Credenciais abaixo são apenas de desenvolvimento.
+
+# URL pública (navegador -> gateway do k3d). O browser resolve *.localtest.me para 127.0.0.1.
+exposure:
+  scheme: https
+  port: "9443"
+  className: traefik
+  hosts:
+    painel: fila-painel.apps.localtest.me
+    atendimento: fila-atendimento.apps.localtest.me
+    keycloak: fila-keycloak.apps.localtest.me
+
+# Imagens construídas pela pipeline Tekton (monorepo => uma única tag, o hash do commit).
+# ATENÇÃO: a pipeline atualiza a linha "tag:" abaixo via sed. Mantenha UMA única chave "tag:" neste arquivo.
+image:
+  registry: k3d-my-registry:5000
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+apiAtendimento:
+  replicas: 1
+  image: fila-api-atendimento
+  port: 8082
+  # Em produção a chamada é recusada sem painel ativo; mantenha true.
+  exigirPainelAtivo: "true"
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { memory: 768Mi }
+
+apiPainel:
+  replicas: 1
+  image: fila-api-painel
+  port: 8081
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { memory: 768Mi }
+
+appAtendimento:
+  replicas: 1
+  image: fila-app-atendimento
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+appPainel:
+  replicas: 1
+  image: fila-app-painel
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
+
+postgres:
+  image: postgres:16-alpine
+  database: fila_atendimento
+  username: fila
+  password: fila123
+  storage: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+
+artemis:
+  # false: broker via StatefulSet com a imagem abaixo.
+  # true:  broker gerenciado pelo ActiveMQ Artemis Operator (CR ActiveMQArtemis, broker.amq.io).
+  #        Requer o operador instalado (examples/operators/install-operator-artemis.sh).
+  operator:
+    enabled: false
+  image: apache/activemq-artemis:2.33.0
+  username: artemis
+  password: artemis123
+  storage: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { memory: 1Gi }
+
+keycloak:
+  image: quay.io/keycloak/keycloak:24.0
+  adminUser: admin
+  adminPassword: admin
+  resources:
+    requests: { cpu: 200m, memory: 768Mi }
+    limits: { memory: 1536Mi }

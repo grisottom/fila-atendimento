@@ -1,0 +1,49 @@
+{{- /* app-atendimento e app-painel: nginx servindo o build estático do React */ -}}
+{{- range $app := list "appAtendimento" "appPainel" }}
+{{- $v := index $.Values $app }}
+{{- $name := ternary "fila-app-atendimento" "fila-app-painel" (eq $app "appAtendimento") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  replicas: {{ $v.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 8 }}
+    spec:
+      containers:
+        - name: nginx
+          image: {{ include "fila.image" (dict "root" $ "name" $v.image) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+---
+{{- end }}

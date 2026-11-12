@@ -1,0 +1,77 @@
+{{- /* api-atendimento e api-painel: mesmo formato, mudam porta, imagem e variáveis */ -}}
+{{- range $api := list "apiAtendimento" "apiPainel" }}
+{{- $v := index $.Values $api }}
+{{- $name := ternary "fila-api-atendimento" "fila-api-painel" (eq $api "apiAtendimento") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+  ports:
+    - name: http
+      port: {{ $v.port }}
+      targetPort: {{ $v.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  replicas: {{ $v.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 8 }}
+    spec:
+      containers:
+        - name: app
+          image: {{ include "fila.image" (dict "root" $ "name" $v.image) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=70"
+            - name: SPRING_ARTEMIS_BROKER_URL
+              value: tcp://fila-artemis:61616
+            - name: SPRING_ARTEMIS_USER
+              valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_USER } }
+            - name: SPRING_ARTEMIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_PASSWORD } }
+            # "iss" do token = URL pública do Keycloak; as chaves são buscadas pelo Service interno
+            - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI
+              value: {{ include "fila.issuer" $ | quote }}
+            - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI
+              value: http://fila-keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
+            {{- if eq $api "apiAtendimento" }}
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://fila-postgres:5432/{{ $.Values.postgres.database }}
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: fila-credentials, key: POSTGRES_USER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: fila-credentials, key: POSTGRES_PASSWORD } }
+            - name: ATENDIMENTO_EXIGIR_PAINEL_ATIVO
+              value: {{ $v.exigirPainelAtivo | quote }}
+            {{- end }}
+          ports:
+            - containerPort: {{ $v.port }}
+          startupProbe:
+            tcpSocket:
+              port: {{ $v.port }}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: {{ $v.port }}
+            periodSeconds: 10
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+---
+{{- end }}

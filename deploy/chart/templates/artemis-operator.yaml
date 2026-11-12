@@ -1,0 +1,51 @@
+{{- if .Values.artemis.operator.enabled }}
+{{- /*
+Broker gerenciado pelo ActiveMQ Artemis Operator (arkmq-org / AMQ Broker, API broker.amq.io).
+O operador cria o StatefulSet "fila-artemis-ss", o PVC e os Services "fila-artemis-*-svc".
+A configuração padrão gerada pelo operador já tem o que as APIs usam: DLQ como dead-letter,
+auto-create de filas/endereços e wildcards (agencia.*.painel.*).
+*/}}
+apiVersion: broker.amq.io/v1beta1
+kind: ActiveMQArtemis
+metadata:
+  name: fila-artemis
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
+spec:
+  adminUser: {{ .Values.artemis.username | quote }}
+  adminPassword: {{ .Values.artemis.password | quote }}
+  deploymentPlan:
+    size: 1
+    persistenceEnabled: true
+    # equivalente ao ANONYMOUS_LOGIN=false da imagem apache/activemq-artemis
+    requireLogin: true
+    storage:
+      size: {{ .Values.artemis.storage }}
+    resources:
+      {{- toYaml .Values.artemis.resources | nindent 6 }}
+  acceptors:
+    - name: all
+      port: 61616
+      protocols: all
+      # Sem isso o acceptor escuta só no hostname do pod; 0.0.0.0 evita depender
+      # de como o ztunnel (Istio ambient) entrega o tráfego ao pod.
+      bindToAllInterfaces: true
+  console:
+    expose: false
+---
+# Mantém o endereço que as APIs já usam (tcp://fila-artemis:61616) apontando para o pod do operador
+apiVersion: v1
+kind: Service
+metadata:
+  name: fila-artemis
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
+spec:
+  selector:
+    ActiveMQArtemis: fila-artemis
+    application: fila-artemis-app
+  ports:
+    - name: core
+      port: 61616
+      targetPort: 61616
+{{- end }}

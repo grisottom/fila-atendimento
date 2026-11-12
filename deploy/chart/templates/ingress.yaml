@@ -1,0 +1,69 @@
+{{- $cls := .Values.exposure.className }}
+{{- $h := .Values.exposure.hosts }}
+# Painel: / -> app-painel, /api -> api-painel
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fila-painel
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-painel") | nindent 4 }}
+spec:
+  ingressClassName: {{ $cls }}
+  rules:
+    - host: {{ $h.painel }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: fila-api-painel, port: { number: {{ .Values.apiPainel.port }} } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: fila-app-painel, port: { number: 80 } }
+  tls:
+    - hosts: [{{ $h.painel }}]
+---
+# Atendimento: / -> app-atendimento, /api -> api-atendimento
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fila-atendimento
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-atendimento") | nindent 4 }}
+spec:
+  ingressClassName: {{ $cls }}
+  rules:
+    - host: {{ $h.atendimento }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: fila-api-atendimento, port: { number: {{ .Values.apiAtendimento.port }} } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: fila-app-atendimento, port: { number: 80 } }
+  tls:
+    - hosts: [{{ $h.atendimento }}]
+---
+# Keycloak (login do navegador)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fila-keycloak
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-keycloak") | nindent 4 }}
+spec:
+  ingressClassName: {{ $cls }}
+  rules:
+    - host: {{ $h.keycloak }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: fila-keycloak, port: { number: 8080 } }
+  tls:
+    - hosts: [{{ $h.keycloak }}]
