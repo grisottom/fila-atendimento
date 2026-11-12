@@ -236,3 +236,89 @@ quem está trabalhando, em qual estação, liberar a estação ao sair).
   para distinguir "presente e ocioso" de "foi embora".
 - [ ] Derivar "atendente livre para o serviço" = presente + apto (permissão) + sem
   atendimento ativo. Alimenta a liberação oportunista da pré-triagem.
+
+---
+
+## Login via IdP OAuth2/OIDC externo (SSO em `sso.apps.localtest.me`)
+
+**Contexto:** hoje o chart do fila-atendimento implanta o próprio Keycloak (realm,
+clients, usuários e temas) e as APIs só validam tokens porque buscam as chaves pelo
+Service interno (`JWK_SET_URI=http://fila-keycloak:8080/...`); só o `issuer` usa a URL
+pública. Dentro dos pods, `*.apps.localtest.me` resolve para `::1` (connection refused),
+então sem esse atalho as APIs não conseguem validar nenhum token.
+
+**Objetivo:** tratar o IdP como **externo**, como será no cenário real: a aplicação não
+implanta nem conhece o Keycloak por dentro do cluster; só recebe issuer, client_ids e,
+se for o caso, a CA do IdP. No laboratório o IdP é um Keycloak que nós controlamos
+(namespace e host próprios). Os papéis (`admin`/`atendente`) e o atributo `agencia`
+continuam vindo do token do IdP.
+
+**O que o dono do IdP fornece (cenário real):** URL do issuer, os client_ids
+(`fila-painel`, `fila-atendimento`), redirect URIs/web origins cadastradas para os
+nossos hosts e a CA, se for corporativa. **Sem client secret:** os dois apps são SPAs
+(client público com Authorization Code + PKCE); secret só faria sentido com um backend
+fazendo login (BFF) ou chamadas serviço a serviço (client credentials).
+
+**Decisões tomadas:**
+- **IdP:** Keycloak 24 em modo `start` (produção), com Postgres próprio no namespace
+  `sso`, em `https://sso.apps.localtest.me:9443`. Fica no projeto
+  `k3d-cluster-istio-rancher` (fora do chart da aplicação).
+- **Realm:** importado do `realm-export.json` atual (roles, client scope `agencia`,
+  usuários e temas painel/atendimento). O import só acontece se o realm **não existir**:
+  depois da primeira subida, mudanças são pelo console/API admin (o Postgres persiste
+  entre reinícios; só se perde ao recriar o cluster).
+- **Clients:** redirect URIs e web origins só dos hosts `fila-painel` e
+  `fila-atendimento`; PKCE S256 obrigatório; post-logout redirect. Mantido
+  `directAccessGrantsEnabled` (usado pelos scripts de teste; num IdP real costuma vir
+  desligado).
+- **Porta 9443 mantida** (não 443): no host, a 443 pode estar ocupada ou exigir admin.
+  Como o `iss` do token é comparado como texto, o issuer precisa ser idêntico dentro e
+  fora do cluster: `https://sso.apps.localtest.me:9443/realms/fila-atendimento`.
+- **DNS no cluster:** ConfigMap `coredns-custom` (o CoreDNS do k3s já importa
+  `/etc/coredns/custom/*.override`; hoje o ConfigMap não existe) com uma regra
+  `rewrite` de `*.apps.localtest.me` para o Service interno do gateway (abaixo). Não
+  altera o ConfigMap `coredns` gerenciado pelo k3s nem o DNS fora do cluster.
+- **Porta no cluster:** Service `ClusterIP` novo em `istio-system`, com o mesmo
+  seletor do `istio-ingressgateway` (`app=istio-ingressgateway`,
+  `istio=ingressgateway`), portas `9443→443` e `443→443`. O Service do gateway
+  instalado pelo Helm não é alterado.
+- **CA:** a CA do laboratório (`my-cluster-ca`, secret `wildcard-apps-ca`) é entregue
+  à aplicação como ConfigMap `idp-ca-bundle`; um initContainer monta o truststore da
+  JVM das APIs. No cenário real é aí que entra a CA corporativa.
+- **Escopo:** só o exemplo `fila-atendimento-AMQ-Operator` (namespace `fila-amq`).
+
+**Passos previstos:**
+
+Plataforma (`k3d-cluster-istio-rancher`):
+- [ ] Namespace `sso`: Postgres + Keycloak 24 (`start`, `KC_HOSTNAME` público,
+  `KC_HTTP_ENABLED`, `KC_PROXY_HEADERS=xforwarded`), Ingress `sso.apps.localtest.me`,
+  realm e temas importados.
+- [ ] Service `ClusterIP` em `istio-system` (`9443→443`, `443→443`).
+- [ ] ConfigMap `coredns-custom` com o `rewrite` para esse Service; testar a resolução
+  e um `GET` no issuer a partir de um pod.
+- [ ] ConfigMap `idp-ca-bundle` com a CA no namespace da aplicação.
+
+Chart (`deploy/chart`):
+- [ ] Remover o Keycloak: `templates/keycloak.yaml`, realm e temas em `files/`, Ingress
+  e chaves de admin no Secret.
+- [ ] Bloco `oidc` no `values.yaml`: `issuerUri`, `jwkSetUri` (públicos) e nome do
+  ConfigMap da CA (opcional; só para CA privada).
+- [ ] APIs: `ISSUER_URI`/`JWK_SET_URI` pela URL pública via HTTPS; initContainer que
+  gera o truststore a partir do ConfigMap da CA.
+
+Frontends (`app-atendimento`, `app-painel`):
+- [ ] `VITE_KEYCLOAK_URL=https://sso.apps.localtest.me:9443` (parâmetro da pipeline).
+- [ ] Realm e client_id como build-args opcionais (default: valores atuais).
+- [ ] `pkceMethod: "S256"` explícito no `keycloak.init`.
+
+Migração (sem deixar o login quebrado no meio):
+- [ ] 1) Subir SSO, DNS, Service e CA. 2) Rodar o `04` (imagens novas já apontando
+  para o SSO). 3) Rodar o `02` (chart sem Keycloak); o ArgoCD remove o Keycloak antigo.
+
+Validação:
+- [ ] Login nos dois apps, triagem, "chamar próximo" e evento no painel (SSE).
+- [ ] Confirmar que nenhum pod da aplicação fala com o Keycloak por Service interno.
+- [ ] Atualizar o README do exemplo (URLs, Keycloak externo) e os READMEs do projeto.
+
+> Recomendação para depois: validar `aud`/`azp` nas APIs. Hoje elas aceitam qualquer
+> token do realm, o que importa mais quando o IdP é compartilhado com outros sistemas.
