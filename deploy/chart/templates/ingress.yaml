@@ -47,3 +47,24 @@ spec:
               service: { name: fila-app-atendimento, port: { number: 80 } }
   tls:
     - hosts: [{{ $h.atendimento }}]
+---
+# Console web do Artemis (8161). O console escuta só no IP do pod, então o backend é o Service
+# headless criado pelo operador (port-forward não funciona). Login: artemis.username/password.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fila-artemis
+  labels:
+    {{- include "fila.labels" (dict "root" . "name" "fila-artemis") | nindent 4 }}
+spec:
+  ingressClassName: {{ $cls }}
+  rules:
+    - host: {{ $h.artemis }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: fila-artemis-hdls-svc, port: { number: 8161 } }
+  tls:
+    - hosts: [{{ $h.artemis }}]

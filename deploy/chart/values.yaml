@@ -8,6 +8,7 @@ exposure:
   hosts:
     painel: fila-painel.apps.localtest.me
     atendimento: fila-atendimento.apps.localtest.me
+    artemis: fila-artemis.apps.localtest.me
 
 # Imagens construídas pela pipeline Tekton (monorepo => uma única tag, o hash do commit).
 # ATENÇÃO: a pipeline atualiza a linha "tag:" abaixo via sed. Mantenha UMA única chave "tag:" neste arquivo.
