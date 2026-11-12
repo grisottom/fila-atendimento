@@ -76,6 +76,8 @@ A base da API vem de `VITE_API_URL`. Os helpers expostos são `api.get/post/put/
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
 | `VITE_KEYCLOAK_URL` | `http://localhost:8080` | URL base do Keycloak. |
+| `VITE_KEYCLOAK_REALM` | `fila-atendimento` | Realm (opcional). |
+| `VITE_KEYCLOAK_CLIENT_ID` | `fila-atendimento` | client_id (opcional). O login usa PKCE S256. |
 | `VITE_API_URL` | `""` (mesma origem) | Base da `api-atendimento` para as chamadas REST. |
 
 ---

@@ -81,6 +81,8 @@ Realm: `fila-atendimento`. Do Keycloak vêm os **papéis** de acesso:
 
 Atributo do usuário no Keycloak: `agencia` (ex.: `agencia-01`), mapeado no token JWT via protocol mapper.
 
+No deploy Kubernetes (`deploy/chart`) o IdP é **externo**: o chart não implanta Keycloak e recebe só o bloco `oidc` do `values.yaml` (issuer, JWKS e, opcionalmente, o ConfigMap com a CA do IdP). Os apps são SPAs (Authorization Code + PKCE S256, sem client secret). Detalhes do laboratório (SSO em `sso.apps.localtest.me`) no README do exemplo `fila-atendimento-AMQ-Operator` do projeto k3d-cluster-istio-rancher. O `docker-compose` continua com o Keycloak local.
+
 ### Banco de dados (permissões de atendimento)
 
 As **permissões de atendimento** (quais serviços o atendente pode chamar) são gerenciadas no banco, nas tabelas `atendente` e `permissoes_atendente`:

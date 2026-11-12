@@ -64,6 +64,8 @@ Enquanto o painel está aberto, um timer renova o token a cada 10 min (`keycloak
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
 | `VITE_KEYCLOAK_URL` | `http://localhost:8080` | URL base do Keycloak. |
+| `VITE_KEYCLOAK_REALM` | `fila-atendimento` | Realm (opcional). |
+| `VITE_KEYCLOAK_CLIENT_ID` | `fila-painel` | client_id (opcional). O login usa PKCE S256. |
 | `VITE_API_PAINEL_URL` | `""` (mesma origem) | Base da `api-painel` para a conexão SSE. |
 
 ---

@@ -3,15 +3,6 @@
 {{- printf "%s://%s:%s" .root.Values.exposure.scheme .host .root.Values.exposure.port -}}
 {{- end -}}
 
-{{/* URL pública do Keycloak e issuer do realm */}}
-{{- define "fila.keycloakUrl" -}}
-{{- include "fila.url" (dict "root" . "host" .Values.exposure.hosts.keycloak) -}}
-{{- end -}}
-
-{{- define "fila.issuer" -}}
-{{- printf "%s/realms/fila-atendimento" (include "fila.keycloakUrl" .) -}}
-{{- end -}}
-
 {{/* Imagem de um componente construído pela pipeline */}}
 {{- define "fila.image" -}}
 {{- printf "%s/%s:%s" .root.Values.image.registry .name .root.Values.image.tag -}}

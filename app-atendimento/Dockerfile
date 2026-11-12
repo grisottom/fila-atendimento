@@ -8,6 +8,11 @@ COPY src ./src
 # http://localhost:8080). O Vite embute variáveis VITE_* no momento do build.
 ARG VITE_KEYCLOAK_URL=""
 ENV VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}
+# Realm e client_id do IdP (opcionais; vazio → fila-atendimento / fila-atendimento).
+ARG VITE_KEYCLOAK_REALM=""
+ENV VITE_KEYCLOAK_REALM=${VITE_KEYCLOAK_REALM}
+ARG VITE_KEYCLOAK_CLIENT_ID=""
+ENV VITE_KEYCLOAK_CLIENT_ID=${VITE_KEYCLOAK_CLIENT_ID}
 RUN npm run build
 
 FROM docker.io/library/nginx:alpine

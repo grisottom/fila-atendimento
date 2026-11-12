@@ -290,35 +290,70 @@ fazendo login (BFF) ou chamadas serviço a serviço (client credentials).
 **Passos previstos:**
 
 Plataforma (`k3d-cluster-istio-rancher`):
-- [ ] Namespace `sso`: Postgres + Keycloak 24 (`start`, `KC_HOSTNAME` público,
+- [x] Namespace `sso`: Postgres + Keycloak 24 (`start`, `KC_HOSTNAME` público,
   `KC_HTTP_ENABLED`, `KC_PROXY_HEADERS=xforwarded`), Ingress `sso.apps.localtest.me`,
   realm e temas importados.
-- [ ] Service `ClusterIP` em `istio-system` (`9443→443`, `443→443`).
-- [ ] ConfigMap `coredns-custom` com o `rewrite` para esse Service; testar a resolução
+- [x] Service `ClusterIP` em `istio-system` (`9443→443`, `443→443`).
+- [x] ConfigMap `coredns-custom` com o `rewrite` para esse Service; testar a resolução
   e um `GET` no issuer a partir de um pod.
-- [ ] ConfigMap `idp-ca-bundle` com a CA no namespace da aplicação.
+- [x] ConfigMap `idp-ca-bundle` com a CA no namespace da aplicação.
 
 Chart (`deploy/chart`):
-- [ ] Remover o Keycloak: `templates/keycloak.yaml`, realm e temas em `files/`, Ingress
+- [x] Remover o Keycloak: `templates/keycloak.yaml`, realm e temas em `files/`, Ingress
   e chaves de admin no Secret.
-- [ ] Bloco `oidc` no `values.yaml`: `issuerUri`, `jwkSetUri` (públicos) e nome do
+- [x] Bloco `oidc` no `values.yaml`: `issuerUri`, `jwkSetUri` (públicos) e nome do
   ConfigMap da CA (opcional; só para CA privada).
-- [ ] APIs: `ISSUER_URI`/`JWK_SET_URI` pela URL pública via HTTPS; initContainer que
+- [x] APIs: `ISSUER_URI`/`JWK_SET_URI` pela URL pública via HTTPS; initContainer que
   gera o truststore a partir do ConfigMap da CA.
 
 Frontends (`app-atendimento`, `app-painel`):
-- [ ] `VITE_KEYCLOAK_URL=https://sso.apps.localtest.me:9443` (parâmetro da pipeline).
-- [ ] Realm e client_id como build-args opcionais (default: valores atuais).
-- [ ] `pkceMethod: "S256"` explícito no `keycloak.init`.
+- [x] `VITE_KEYCLOAK_URL=https://sso.apps.localtest.me:9443` (parâmetro da pipeline).
+- [x] Realm e client_id como build-args opcionais (default: valores atuais).
+- [x] `pkceMethod: "S256"` explícito no `keycloak.init`.
 
 Migração (sem deixar o login quebrado no meio):
-- [ ] 1) Subir SSO, DNS, Service e CA. 2) Rodar o `04` (imagens novas já apontando
+- [x] 1) Subir SSO, DNS, Service e CA. 2) Rodar o `04` (imagens novas já apontando
   para o SSO). 3) Rodar o `02` (chart sem Keycloak); o ArgoCD remove o Keycloak antigo.
 
 Validação:
-- [ ] Login nos dois apps, triagem, "chamar próximo" e evento no painel (SSE).
-- [ ] Confirmar que nenhum pod da aplicação fala com o Keycloak por Service interno.
-- [ ] Atualizar o README do exemplo (URLs, Keycloak externo) e os READMEs do projeto.
+- [ ] Login nos dois apps (no navegador; a API, o PKCE e o SSE foram validados via curl), triagem, "chamar próximo" e evento no painel (SSE).
+- [x] Confirmar que nenhum pod da aplicação fala com o Keycloak por Service interno.
+- [x] Atualizar o README do exemplo (URLs, Keycloak externo) e os READMEs do projeto.
 
 > Recomendação para depois: validar `aud`/`azp` nas APIs. Hoje elas aceitam qualquer
 > token do realm, o que importa mais quando o IdP é compartilhado com outros sistemas.
+
+---
+
+## Frontends agnósticos de IdP OIDC (trocar `keycloak-js`)
+
+**Contexto:** hoje os apps usam `keycloak-js`, que só fala com Keycloak (assume o formato
+`{url}/realms/{realm}/protocol/openid-connect/...`). Por isso as variáveis de build são
+`VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM` e `VITE_KEYCLOAK_CLIENT_ID`: `url` + `realm` é um
+conceito do Keycloak. Um IdP OIDC genérico (Entra ID, Okta, Auth0...) só precisa de **issuer** e
+**client_id**; o resto vem do discovery (`{issuer}/.well-known/openid-configuration`), e o issuer
+nem sempre tem o formato `/realms/...`.
+
+**Objetivo:** os apps falarem com qualquer IdP OIDC (Authorization Code + PKCE), sem nada
+específico de Keycloak no código nem nas variáveis.
+
+**Passos previstos:**
+- [ ] Escolher a biblioteca (`oidc-client-ts`, com `react-oidc-context` se ajudar no React) e
+  confirmar suporte a PKCE S256, renovação de token e logout com post-logout redirect.
+- [ ] Substituir `keycloak-js` nos dois apps, mantendo o comportamento atual: login obrigatório
+  antes de renderizar, `updateToken(30)` antes de cada chamada em `api.js`, renovação periódica e
+  logout em caso de falha no painel.
+- [ ] Papéis: hoje vêm de `keycloak.hasRealmRole` (`realm_access.roles`). Ler do token e tornar o
+  claim configurável, já que outros IdPs usam outro (`roles`, `groups`...). Alinhar com o
+  `JwtAuthenticationConverter` das APIs, que também lê `realm_access.roles`.
+- [ ] Variáveis de build: `VITE_OIDC_ISSUER_URL` e `VITE_OIDC_CLIENT_ID` (o realm deixa de existir
+  como conceito separado). Manter `VITE_KEYCLOAK_*` como fallback por um tempo ou atualizar tudo
+  junto (Dockerfiles, `docker-compose`, READMEs dos apps).
+- [ ] Renomear `KEYCLOAK_URL` em `lib.sh` e o param `keycloak-url` da pipeline (k3d-cluster-istio-rancher)
+  para `OIDC_ISSUER_URL` / `oidc-issuer-url`, derivando-os do `oidc.issuerUri` do chart para não
+  duplicar o valor.
+- [ ] Validar com o Keycloak do laboratório e, se possível, com um segundo IdP OIDC.
+
+> Possível passo intermediário, mais barato: só renomear as variáveis e derivar `url`/`realm` do
+> issuer no código, mantendo `keycloak-js`. Deixa a configuração genérica, mas a implementação
+> continua presa ao Keycloak.

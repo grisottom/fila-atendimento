@@ -32,24 +32,48 @@ spec:
       labels:
         {{- include "fila.labels" (dict "root" $ "name" $name) | nindent 8 }}
     spec:
+      {{- if $.Values.oidc.caConfigMap }}
+      initContainers:
+        # Gera o truststore da JVM: cacerts padrão + CA(s) do IdP (ConfigMap com ca.crt)
+        - name: idp-truststore
+          image: {{ include "fila.image" (dict "root" $ "name" $v.image) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              cp "$JAVA_HOME/lib/security/cacerts" /truststore/cacerts
+              chmod u+w /truststore/cacerts
+              cd /tmp
+              awk '/BEGIN CERTIFICATE/{n++} n{print > ("idp-" n ".crt")}' /idp-ca/ca.crt
+              for f in idp-*.crt; do
+                keytool -importcert -noprompt -trustcacerts -alias "$f" -file "$f" \
+                  -keystore /truststore/cacerts -storepass changeit
+              done
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: idp-ca, mountPath: /idp-ca, readOnly: true }
+            - { name: truststore, mountPath: /truststore }
+      {{- end }}
       containers:
         - name: app
           image: {{ include "fila.image" (dict "root" $ "name" $v.image) }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           env:
             - name: JAVA_TOOL_OPTIONS
-              value: "-XX:MaxRAMPercentage=70"
+              value: "-XX:MaxRAMPercentage=70{{ if $.Values.oidc.caConfigMap }} -Djavax.net.ssl.trustStore=/truststore/cacerts -Djavax.net.ssl.trustStorePassword=changeit{{ end }}"
             - name: SPRING_ARTEMIS_BROKER_URL
               value: tcp://fila-artemis:61616
             - name: SPRING_ARTEMIS_USER
               valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_USER } }
             - name: SPRING_ARTEMIS_PASSWORD
               valueFrom: { secretKeyRef: { name: fila-credentials, key: ARTEMIS_PASSWORD } }
-            # "iss" do token = URL pública do Keycloak; as chaves são buscadas pelo Service interno
+            # IdP externo: "iss" e JWKS pela URL pública (HTTPS), idêntica dentro e fora do cluster
             - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI
-              value: {{ include "fila.issuer" $ | quote }}
+              value: {{ $.Values.oidc.issuerUri | quote }}
             - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI
-              value: http://fila-keycloak:8080/realms/fila-atendimento/protocol/openid-connect/certs
+              value: {{ $.Values.oidc.jwkSetUri | quote }}
             {{- if eq $api "apiAtendimento" }}
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://fila-postgres:5432/{{ $.Values.postgres.database }}
@@ -73,5 +97,17 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml $v.resources | nindent 12 }}
+          {{- if $.Values.oidc.caConfigMap }}
+          volumeMounts:
+            - { name: truststore, mountPath: /truststore, readOnly: true }
+          {{- end }}
+      {{- if $.Values.oidc.caConfigMap }}
+      volumes:
+        - name: idp-ca
+          configMap:
+            name: {{ $.Values.oidc.caConfigMap }}
+        - name: truststore
+          emptyDir: {}
+      {{- end }}
 ---
 {{- end }}

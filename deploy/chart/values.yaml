@@ -8,7 +8,6 @@ exposure:
   hosts:
     painel: fila-painel.apps.localtest.me
     atendimento: fila-atendimento.apps.localtest.me
-    keycloak: fila-keycloak.apps.localtest.me
 
 # Imagens construídas pela pipeline Tekton (monorepo => uma única tag, o hash do commit).
 # ATENÇÃO: a pipeline atualiza a linha "tag:" abaixo via sed. Mantenha UMA única chave "tag:" neste arquivo.
@@ -69,10 +68,14 @@ artemis:
     requests: { cpu: 100m, memory: 384Mi }
     limits: { memory: 1Gi }
 
-keycloak:
-  image: quay.io/keycloak/keycloak:24.0
-  adminUser: admin
-  adminPassword: admin
-  resources:
-    requests: { cpu: 200m, memory: 768Mi }
-    limits: { memory: 1536Mi }
+# IdP OAuth2/OIDC EXTERNO (a aplicação não implanta Keycloak). Os apps são SPAs (client público,
+# Authorization Code + PKCE): não há client secret. O dono do IdP fornece issuer, client_ids
+# (fila-painel, fila-atendimento), redirect URIs/web origins dos hosts acima e, se for CA privada, a CA.
+# issuerUri deve ser IDÊNTICO ao "iss" do token (comparado como texto), igual dentro e fora do cluster.
+oidc:
+  issuerUri: https://sso.apps.localtest.me:9443/realms/fila-atendimento
+  jwkSetUri: https://sso.apps.localtest.me:9443/realms/fila-atendimento/protocol/openid-connect/certs
+  # Nome de um ConfigMap (chave ca.crt, um ou mais certificados PEM) com a CA do IdP, no namespace
+  # da aplicação. Vazio = usa só as CAs padrão da JVM. Quando informado, um initContainer gera o
+  # truststore (cacerts da JVM + essa CA) usado pelas APIs.
+  caConfigMap: idp-ca-bundle
